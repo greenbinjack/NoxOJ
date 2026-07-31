@@ -1,10 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+
+	"noxoj/internal/config"
 )
 
 func newRouter() *chi.Mux {
@@ -18,10 +21,16 @@ func newRouter() *chi.Mux {
 }
 
 func main() {
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("failed to load config: %v", err)
+	}
+
 	r := newRouter()
 
-	log.Println("NoxOJ API listening on :8081")
-	if err := http.ListenAndServe(":8081", r); err != nil {
+	addr := fmt.Sprintf(":%d", cfg.Port)
+	log.Printf("NoxOJ API listening on %s (environment=%s)", addr, cfg.Environment)
+	if err := http.ListenAndServe(addr, r); err != nil {
 		log.Fatal(err)
 	}
 }
