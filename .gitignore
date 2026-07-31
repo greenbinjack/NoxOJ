@@ -6,6 +6,7 @@ bin/
 # Local environment / secrets
 .env
 .env.*
+!.env.example
 
 # Editor/IDE
 .vscode/
@@ -19,6 +20,7 @@ bin/
 /ARCHITECTURE.md
 /FEATURES.md
 /IMPLEMENTATION_PLAN.md
+/README.md
 
 # OS cruft
 .DS_Store
