@@ -1,7 +1,0 @@
-.git
-.claude
-bin/
-docs/
-*.md
-.env
-.env.*
