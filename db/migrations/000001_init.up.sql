@@ -1,0 +1,3 @@
+-- Intentionally empty. This migration exists to prove the migration
+-- tool and version tracking work end-to-end before any real schema
+-- exists — the first real schema (users/roles) arrives in Sprint 7.

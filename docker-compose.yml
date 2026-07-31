@@ -29,5 +29,25 @@ services:
       postgres:
         condition: service_healthy
 
+  # One-off tool, not a long-running service — excluded from a plain
+  # `docker compose up` via the "tools" profile. Invoke explicitly:
+  #   docker compose run --rm migrate up
+  #   docker compose run --rm migrate down 1
+  #   docker compose run --rm migrate create -ext sql -dir /migrations -seq <name>
+  migrate:
+    image: migrate/migrate:v4.18.1
+    profiles: ["tools"]
+    volumes:
+      - ./db/migrations:/migrations
+    entrypoint:
+      [
+        "migrate",
+        "-path", "/migrations",
+        "-database", "postgres://${POSTGRES_USER:-noxoj}:${POSTGRES_PASSWORD:-noxoj_dev_password}@postgres:5432/${POSTGRES_DB:-noxoj}?sslmode=disable",
+      ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:

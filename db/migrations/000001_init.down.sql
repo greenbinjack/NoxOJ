@@ -1,0 +1,1 @@
+-- Intentionally empty — reverses migration 000001, which made no changes.
