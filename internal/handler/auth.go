@@ -20,6 +20,7 @@ import (
 type AuthHandler struct {
 	logger        zerolog.Logger
 	users         *repository.UserRepository
+	roles         *repository.RoleRepository
 	jwtSecret     []byte
 	loginLimiter  *ratelimit.LoginLimiter
 	refreshTokens *tokenstore.RefreshTokenStore
@@ -29,6 +30,7 @@ type AuthHandler struct {
 func NewAuthHandler(
 	logger zerolog.Logger,
 	users *repository.UserRepository,
+	roles *repository.RoleRepository,
 	jwtSecret []byte,
 	loginLimiter *ratelimit.LoginLimiter,
 	refreshTokens *tokenstore.RefreshTokenStore,
@@ -37,6 +39,7 @@ func NewAuthHandler(
 	return &AuthHandler{
 		logger:        logger,
 		users:         users,
+		roles:         roles,
 		jwtSecret:     jwtSecret,
 		loginLimiter:  loginLimiter,
 		refreshTokens: refreshTokens,
@@ -130,7 +133,14 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	h.loginLimiter.RecordSuccess(req.Username)
 
-	accessToken, err := auth.GenerateAccessToken(user.ID, h.jwtSecret)
+	roleNames, err := h.roles.GetRoleNames(r.Context(), user.ID)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("failed to load roles for login")
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	accessToken, err := auth.GenerateAccessToken(user.ID, roleNames, h.jwtSecret)
 	if err != nil {
 		h.logger.Error().Err(err).Msg("failed to generate access token")
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -176,7 +186,18 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newAccessToken, err := auth.GenerateAccessToken(userID, h.jwtSecret)
+	// Roles are re-fetched here, not carried over from the old token —
+	// this is the moment a role change (promotion/demotion) actually
+	// takes effect, since the access token itself can't be updated
+	// mid-flight.
+	roleNames, err := h.roles.GetRoleNames(r.Context(), userID)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("failed to load roles for refresh")
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	newAccessToken, err := auth.GenerateAccessToken(userID, roleNames, h.jwtSecret)
 	if err != nil {
 		h.logger.Error().Err(err).Msg("failed to generate access token")
 		writeError(w, http.StatusInternalServerError, "internal error")

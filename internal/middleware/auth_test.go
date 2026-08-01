@@ -21,13 +21,19 @@ func protectedHandler() http.Handler {
 	})
 }
 
-func TestAuthenticate_ValidToken(t *testing.T) {
-	secret := []byte("test-secret")
-	userID := uuid.New()
-	token, err := auth.GenerateAccessToken(userID, secret)
+func tokenWithRoles(t *testing.T, secret []byte, userID uuid.UUID, roles []string) string {
+	t.Helper()
+	token, err := auth.GenerateAccessToken(userID, roles, secret)
 	if err != nil {
 		t.Fatalf("unexpected error generating token: %v", err)
 	}
+	return token
+}
+
+func TestAuthenticate_ValidToken(t *testing.T) {
+	secret := []byte("test-secret")
+	userID := uuid.New()
+	token := tokenWithRoles(t, secret, userID, nil)
 
 	handler := Authenticate(secret)(protectedHandler())
 
@@ -70,10 +76,7 @@ func TestAuthenticate_InvalidToken(t *testing.T) {
 }
 
 func TestAuthenticate_WrongSecret(t *testing.T) {
-	token, err := auth.GenerateAccessToken(uuid.New(), []byte("secret-a"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	token := tokenWithRoles(t, []byte("secret-a"), uuid.New(), nil)
 
 	handler := Authenticate([]byte("secret-b"))(protectedHandler())
 
@@ -82,6 +85,59 @@ func TestAuthenticate_WrongSecret(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected %d, got %d", http.StatusUnauthorized, rec.Code)
+	}
+}
+
+func adminOnlyHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("admin area"))
+	})
+}
+
+func TestRequireRole_AllowsMatchingRole(t *testing.T) {
+	secret := []byte("test-secret")
+	token := tokenWithRoles(t, secret, uuid.New(), []string{"contestant", "admin"})
+
+	handler := Authenticate(secret)(RequireRole("admin")(adminOnlyHandler()))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/ping", nil)
+	req.AddCookie(&http.Cookie{Name: AccessTokenCookieName, Value: token})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+}
+
+func TestRequireRole_RejectsMissingRole(t *testing.T) {
+	secret := []byte("test-secret")
+	token := tokenWithRoles(t, secret, uuid.New(), []string{"contestant"})
+
+	handler := Authenticate(secret)(RequireRole("admin")(adminOnlyHandler()))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/ping", nil)
+	req.AddCookie(&http.Cookie{Name: AccessTokenCookieName, Value: token})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected %d, got %d: %s", http.StatusForbidden, rec.Code, rec.Body.String())
+	}
+}
+
+func TestRequireRole_UnauthenticatedGets401NotForbidden(t *testing.T) {
+	handler := Authenticate([]byte("test-secret"))(RequireRole("admin")(adminOnlyHandler()))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/ping", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	// No cookie at all -> Authenticate itself rejects with 401 before
+	// RequireRole ever runs. Confirms the two failure modes stay
+	// distinct: missing identity is 401, insufficient permission is 403.
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected %d, got %d", http.StatusUnauthorized, rec.Code)
 	}

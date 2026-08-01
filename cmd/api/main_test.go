@@ -10,6 +10,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"noxoj/internal/auth"
+	"noxoj/internal/domain"
 	authmw "noxoj/internal/middleware"
 )
 
@@ -99,7 +100,7 @@ func TestMeRoute_ReturnsAuthenticatedUserID(t *testing.T) {
 	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandlers)
 
 	userID := uuid.New()
-	token, err := auth.GenerateAccessToken(userID, testJWTSecret)
+	token, err := auth.GenerateAccessToken(userID, []string{domain.RoleContestant}, testJWTSecret)
 	if err != nil {
 		t.Fatalf("unexpected error generating token: %v", err)
 	}
@@ -112,8 +113,44 @@ func TestMeRoute_ReturnsAuthenticatedUserID(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
 	}
-	want := `{"user_id":"` + userID.String() + `"}`
+	want := `{"user_id":"` + userID.String() + `","roles":["contestant"]}`
 	if got := rec.Body.String(); got != want {
 		t.Fatalf("expected body %q, got %q", want, got)
+	}
+}
+
+func TestAdminPingRoute_RequiresAdminRole(t *testing.T) {
+	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandlers)
+
+	token, err := auth.GenerateAccessToken(uuid.New(), []string{domain.RoleContestant}, testJWTSecret)
+	if err != nil {
+		t.Fatalf("unexpected error generating token: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/ping", nil)
+	req.AddCookie(&http.Cookie{Name: authmw.AccessTokenCookieName, Value: token})
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected a plain contestant to get %d, got %d: %s", http.StatusForbidden, rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminPingRoute_AllowsAdmin(t *testing.T) {
+	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandlers)
+
+	token, err := auth.GenerateAccessToken(uuid.New(), []string{domain.RoleContestant, domain.RoleAdmin}, testJWTSecret)
+	if err != nil {
+		t.Fatalf("unexpected error generating token: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/ping", nil)
+	req.AddCookie(&http.Cookie{Name: authmw.AccessTokenCookieName, Value: token})
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected an admin to get %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
 	}
 }

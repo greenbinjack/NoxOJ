@@ -17,13 +17,28 @@ const AccessTokenTTL = 15 * time.Minute
 var ErrInvalidToken = errors.New("invalid or expired token")
 
 type claims struct {
+	Roles []string `json:"roles"`
 	jwt.RegisteredClaims
 }
 
-// GenerateAccessToken issues a signed JWT identifying userID, valid
-// for AccessTokenTTL.
-func GenerateAccessToken(userID uuid.UUID, secret []byte) (string, error) {
+// TokenClaims is what ParseAccessToken hands back — everything a
+// caller needs to authenticate *and* authorize a request without a
+// second lookup.
+type TokenClaims struct {
+	UserID uuid.UUID
+	Roles  []string
+}
+
+// GenerateAccessToken issues a signed JWT identifying userID and the
+// roles they held at the moment of issuance, valid for AccessTokenTTL.
+// Roles are a snapshot, not a live value — a promotion or demotion
+// takes effect on the user's next login or token refresh (at most
+// AccessTokenTTL later), not instantly. That's a deliberate tradeoff:
+// the alternative is a database lookup on every authorized request,
+// which defeats the point of a stateless token in the first place.
+func GenerateAccessToken(userID uuid.UUID, roles []string, secret []byte) (string, error) {
 	c := claims{
+		Roles: roles,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID.String(),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -35,7 +50,7 @@ func GenerateAccessToken(userID uuid.UUID, secret []byte) (string, error) {
 }
 
 // ParseAccessToken verifies tokenString's signature and expiry and
-// returns the user ID it identifies.
+// returns the identity and roles it carries.
 //
 // The explicit check that the token's algorithm is HMAC is not
 // decoration — it's the fix for a real, well-known JWT vulnerability
@@ -44,7 +59,7 @@ func GenerateAccessToken(userID uuid.UUID, secret []byte) (string, error) {
 // verifying a forged token against the wrong kind of key (or, in the
 // worst case, accepting alg="none" entirely). We only ever accept
 // what we ourselves signed with.
-func ParseAccessToken(tokenString string, secret []byte) (uuid.UUID, error) {
+func ParseAccessToken(tokenString string, secret []byte) (TokenClaims, error) {
 	c := &claims{}
 	token, err := jwt.ParseWithClaims(tokenString, c, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -53,12 +68,12 @@ func ParseAccessToken(tokenString string, secret []byte) (uuid.UUID, error) {
 		return secret, nil
 	})
 	if err != nil || !token.Valid {
-		return uuid.Nil, ErrInvalidToken
+		return TokenClaims{}, ErrInvalidToken
 	}
 
 	userID, err := uuid.Parse(c.Subject)
 	if err != nil {
-		return uuid.Nil, ErrInvalidToken
+		return TokenClaims{}, ErrInvalidToken
 	}
-	return userID, nil
+	return TokenClaims{UserID: userID, Roles: c.Roles}, nil
 }

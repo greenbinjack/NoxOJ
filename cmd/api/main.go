@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"noxoj/internal/cache"
 	"noxoj/internal/config"
 	"noxoj/internal/database"
+	"noxoj/internal/domain"
 	"noxoj/internal/handler"
 	"noxoj/internal/health"
 	"noxoj/internal/logging"
@@ -80,11 +82,23 @@ func newRouter(
 
 	// Minimal proof the auth chain (login -> cookie -> middleware ->
 	// handler) actually works end to end. Not the real profile API —
-	// that's Sprint 12; this just returns the authenticated user's ID.
+	// that's Sprint 12; this just returns the authenticated user's ID
+	// and roles.
 	r.With(authmw.Authenticate(jwtSecret)).Get("/me", func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := authmw.UserIDFromContext(r.Context())
+		roles, _ := authmw.RolesFromContext(r.Context())
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"user_id":"%s"}`, userID.String())
+		rolesJSON, _ := json.Marshal(roles)
+		fmt.Fprintf(w, `{"user_id":"%s","roles":%s}`, userID.String(), rolesJSON)
+	})
+
+	// Minimal proof RBAC itself works — admin-only, nothing behind it
+	// yet worth protecting for real (that starts once Problem/Contest
+	// management exist). Requires both a valid token AND the admin
+	// role; RequireRole runs after Authenticate so it can read the
+	// roles Authenticate already put in context.
+	r.With(authmw.Authenticate(jwtSecret), authmw.RequireRole(domain.RoleAdmin)).Get("/admin/ping", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"status":"ok, you are an admin"}`))
 	})
 
 	return r
@@ -121,11 +135,12 @@ func main() {
 	defer redisClient.Close()
 
 	users := repository.NewUserRepository(db)
+	roles := repository.NewRoleRepository(db)
 	loginLimiter := ratelimit.NewLoginLimiter(5, 15*time.Minute)
 	refreshTokens := tokenstore.NewRefreshTokenStore(redisClient)
 
 	userHandler := handler.NewUserHandler(logger, users)
-	authHandler := handler.NewAuthHandler(logger, users, cfg.JWTSecret, loginLimiter, refreshTokens, cfg.Environment)
+	authHandler := handler.NewAuthHandler(logger, users, roles, cfg.JWTSecret, loginLimiter, refreshTokens, cfg.Environment)
 
 	r := newRouter(logger, cfg.JWTSecret, Handlers{
 		Register: userHandler.Register,

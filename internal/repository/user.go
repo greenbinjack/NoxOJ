@@ -62,6 +62,49 @@ func (r *UserRepository) Create(ctx context.Context, user *domain.User) (*domain
 	return &created, nil
 }
 
+// CreateWithRole inserts a new user and grants them defaultRole in a
+// single transaction — if role assignment fails (e.g. defaultRole is
+// misspelled and doesn't exist), the user insert rolls back too, so
+// registration can never leave a roleless user behind. Uses the same
+// INSERT...SELECT pattern as RoleRepository.AssignRole; duplicated
+// rather than shared across repositories because sharing it would
+// mean introducing a transaction-spanning-repositories abstraction
+// this codebase doesn't otherwise need yet.
+func (r *UserRepository) CreateWithRole(ctx context.Context, user *domain.User, defaultRole string) (*domain.User, error) {
+	tx, err := r.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op once committed
+
+	rows, err := tx.NamedQuery(insertUserQuery, user)
+	if err != nil {
+		return nil, translateUniqueViolation(err)
+	}
+	var created domain.User
+	if rows.Next() {
+		if err := rows.StructScan(&created); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scanning created user: %w", err)
+		}
+	}
+	rows.Close()
+
+	res, err := tx.Exec(assignRoleQuery, created.ID, defaultRole)
+	if err != nil {
+		return nil, fmt.Errorf("assigning default role: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, fmt.Errorf("assigning default role: role %q does not exist", defaultRole)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("committing transaction: %w", err)
+	}
+
+	return &created, nil
+}
+
 const selectByUsernameQuery = `
 	SELECT id, username, email, password_hash, display_name, rating,
 	       created_at, updated_at, is_offline_local, deleted_at

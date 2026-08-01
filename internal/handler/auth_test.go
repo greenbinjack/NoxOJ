@@ -9,7 +9,9 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"noxoj/internal/auth"
 	"noxoj/internal/config"
+	"noxoj/internal/domain"
 	authmw "noxoj/internal/middleware"
 	"noxoj/internal/ratelimit"
 	"noxoj/internal/repository"
@@ -24,10 +26,11 @@ func testAuthHandler(t *testing.T) (*AuthHandler, *UserHandler) {
 	t.Cleanup(func() { redisClient.Close() })
 
 	users := repository.NewUserRepository(db)
+	roles := repository.NewRoleRepository(db)
 	limiter := ratelimit.NewLoginLimiter(5, 15*time.Minute)
 	refreshTokens := tokenstore.NewRefreshTokenStore(redisClient)
 
-	auth := NewAuthHandler(testLoggerNop(), users, testJWTSecret, limiter, refreshTokens, config.Development)
+	auth := NewAuthHandler(testLoggerNop(), users, roles, testJWTSecret, limiter, refreshTokens, config.Development)
 	user := NewUserHandler(testLoggerNop(), users)
 	return auth, user
 }
@@ -80,6 +83,32 @@ func TestLogin_Success(t *testing.T) {
 	}
 	if refresh != nil && !refresh.HttpOnly {
 		t.Error("expected refresh_token to be HttpOnly")
+	}
+}
+
+func TestLogin_TokenCarriesDefaultRoleFromRegistration(t *testing.T) {
+	authH, userH := testAuthHandler(t)
+	db := testHandlerDB(t)
+	username := "sprint11_login_default_role"
+	password := "correct-horse-battery"
+	t.Cleanup(func() { db.MustExec("DELETE FROM users WHERE username = $1", username) })
+
+	rec := registerAndLogin(t, authH, userH, username, password)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	access := cookieFrom(rec, authmw.AccessTokenCookieName)
+	if access == nil {
+		t.Fatal("expected an access_token cookie")
+	}
+
+	claims, err := auth.ParseAccessToken(access.Value, testJWTSecret)
+	if err != nil {
+		t.Fatalf("unexpected error parsing token: %v", err)
+	}
+	if len(claims.Roles) != 1 || claims.Roles[0] != domain.DefaultRole {
+		t.Errorf("expected roles [%q] (the default from registration), got %v", domain.DefaultRole, claims.Roles)
 	}
 }
 

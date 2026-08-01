@@ -105,7 +105,7 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 		DisplayName:  strings.TrimSpace(req.DisplayName),
 	}
 
-	created, err := h.users.Create(r.Context(), user)
+	created, err := h.users.CreateWithRole(r.Context(), user, domain.DefaultRole)
 	switch {
 	case errors.Is(err, repository.ErrUsernameTaken):
 		writeError(w, http.StatusConflict, "username already taken")

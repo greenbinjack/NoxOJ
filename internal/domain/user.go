@@ -31,6 +31,21 @@ type Role struct {
 	Name string `db:"name"`
 }
 
+// The four roles seeded by migration 000002 (ARCHITECTURE.md §4.2).
+// Named as constants so a typo in a role name fails to compile
+// instead of silently matching nothing at runtime.
+const (
+	RoleAdmin          = "admin"
+	RoleProblemSetter  = "problem_setter"
+	RoleContestant     = "contestant"
+	RoleJudgeOperator  = "judge_operator"
+
+	// DefaultRole is granted automatically on registration — every
+	// new account starts as a plain contestant; every other role is
+	// granted deliberately, later, by someone with the authority to.
+	DefaultRole = RoleContestant
+)
+
 // UserRole mirrors the user_roles join table linking users to roles
 // — the many-to-many relationship between them.
 type UserRole struct {

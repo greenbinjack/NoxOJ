@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -11,23 +12,27 @@ import (
 func TestGenerateAndParseAccessToken(t *testing.T) {
 	secret := []byte("test-secret")
 	userID := uuid.New()
+	roles := []string{"contestant"}
 
-	token, err := GenerateAccessToken(userID, secret)
+	token, err := GenerateAccessToken(userID, roles, secret)
 	if err != nil {
 		t.Fatalf("unexpected error generating token: %v", err)
 	}
 
-	gotID, err := ParseAccessToken(token, secret)
+	got, err := ParseAccessToken(token, secret)
 	if err != nil {
 		t.Fatalf("unexpected error parsing token: %v", err)
 	}
-	if gotID != userID {
-		t.Errorf("expected user ID %s, got %s", userID, gotID)
+	if got.UserID != userID {
+		t.Errorf("expected user ID %s, got %s", userID, got.UserID)
+	}
+	if !reflect.DeepEqual(got.Roles, roles) {
+		t.Errorf("expected roles %v, got %v", roles, got.Roles)
 	}
 }
 
 func TestParseAccessToken_WrongSecret(t *testing.T) {
-	token, err := GenerateAccessToken(uuid.New(), []byte("secret-a"))
+	token, err := GenerateAccessToken(uuid.New(), nil, []byte("secret-a"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
