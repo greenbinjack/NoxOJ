@@ -12,8 +12,10 @@ import (
 
 	"noxoj/internal/config"
 	"noxoj/internal/database"
+	"noxoj/internal/handler"
 	"noxoj/internal/health"
 	"noxoj/internal/logging"
+	"noxoj/internal/repository"
 )
 
 func requestLogger(logger zerolog.Logger) func(http.Handler) http.Handler {
@@ -34,11 +36,12 @@ func requestLogger(logger zerolog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// newRouter takes readiness checks as plain health.Checker functions,
-// not a *sqlx.DB directly — so route tests that have nothing to do
-// with the database (TestRootRoute, TestHealthzRoute) never need a
-// live Postgres connection just to construct a router.
-func newRouter(logger zerolog.Logger, readinessChecks ...health.Checker) *chi.Mux {
+// newRouter takes readiness checks and the register handler as plain
+// functions, not concrete dependency-heavy types — so route tests
+// that have nothing to do with the database or user registration
+// (TestRootRoute, TestHealthzRoute) never need a live Postgres
+// connection just to construct a router.
+func newRouter(logger zerolog.Logger, registerHandler http.HandlerFunc, readinessChecks ...health.Checker) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(requestLogger(logger))
 
@@ -48,6 +51,8 @@ func newRouter(logger zerolog.Logger, readinessChecks ...health.Checker) *chi.Mu
 
 	r.Get("/healthz", health.Liveness)
 	r.Get("/readyz", health.Readiness(readinessChecks...))
+
+	r.Post("/register", registerHandler)
 
 	return r
 }
@@ -73,7 +78,9 @@ func main() {
 	}
 	defer db.Close()
 
-	r := newRouter(logger, database.Checker(db))
+	userHandler := handler.NewUserHandler(logger, repository.NewUserRepository(db))
+
+	r := newRouter(logger, userHandler.Register, database.Checker(db))
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	logger.Info().Str("addr", addr).Str("environment", string(cfg.Environment)).Msg("NoxOJ API starting")

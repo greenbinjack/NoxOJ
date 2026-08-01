@@ -9,8 +9,15 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// stubRegisterHandler stands in for the real registration handler in
+// tests that have nothing to do with registration — they shouldn't
+// need a live database connection just to construct a router.
+func stubRegisterHandler(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 func TestRootRoute(t *testing.T) {
-	r := newRouter(zerolog.Nop())
+	r := newRouter(zerolog.Nop(), stubRegisterHandler)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
@@ -27,7 +34,7 @@ func TestRootRoute(t *testing.T) {
 }
 
 func TestHealthzRoute(t *testing.T) {
-	r := newRouter(zerolog.Nop())
+	r := newRouter(zerolog.Nop(), stubRegisterHandler)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
@@ -39,7 +46,7 @@ func TestHealthzRoute(t *testing.T) {
 }
 
 func TestReadyzRoute(t *testing.T) {
-	r := newRouter(zerolog.Nop())
+	r := newRouter(zerolog.Nop(), stubRegisterHandler)
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
@@ -52,7 +59,7 @@ func TestReadyzRoute(t *testing.T) {
 
 func TestReadyzRoute_FailsWhenADependencyIsDown(t *testing.T) {
 	failingCheck := func() error { return errors.New("database unreachable") }
-	r := newRouter(zerolog.Nop(), failingCheck)
+	r := newRouter(zerolog.Nop(), stubRegisterHandler, failingCheck)
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
