@@ -35,7 +35,7 @@ func testAuthHandler(t *testing.T) (*AuthHandler, *UserHandler) {
 	resetTokens := tokenstore.NewPasswordResetTokenStore(redisClient)
 
 	auth := NewAuthHandler(testLoggerNop(), users, roles, testJWTSecret, limiter, refreshTokens, resetTokens, config.Development)
-	user := NewUserHandler(testLoggerNop(), users)
+	user := NewUserHandler(testLoggerNop(), users, refreshTokens)
 	return auth, user
 }
 

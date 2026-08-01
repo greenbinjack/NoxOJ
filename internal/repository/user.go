@@ -176,6 +176,62 @@ func (r *UserRepository) UpdatePassword(ctx context.Context, id uuid.UUID, passw
 	return nil
 }
 
+const deactivateUserQuery = `
+	UPDATE users SET deleted_at = now()
+	WHERE id = $1 AND deleted_at IS NULL
+`
+
+const insertAuditLogQuery = `
+	INSERT INTO audit_log (actor_id, action, target_type, target_id)
+	VALUES ($1, $2, $3, $4)
+`
+
+// Deactivate soft-deletes id (sets deleted_at) and records an audit
+// log entry crediting actorID, in one transaction — same reasoning as
+// CreateWithRole (Sprint 7): an action and its audit trail must
+// succeed or fail together, since a deactivation with no audit trail
+// (or an audit trail for a deactivation that didn't actually persist)
+// both defeat the point of keeping one at all.
+//
+// This is deliberately not generalized into a shared
+// "repository-spanning transaction" helper — CreateWithRole made the
+// same call for the same reason: that abstraction is only worth
+// building once a second, unrelated caller actually needs it too.
+//
+// Returns ErrUserNotFound if id doesn't exist OR is already
+// deactivated — the same "soft-deleted looks not-found" treatment
+// GetByUsername/GetByID already use, so deactivating a
+// already-deactivated account isn't a special case callers need to
+// think about separately.
+func (r *UserRepository) Deactivate(ctx context.Context, id uuid.UUID, actorID uuid.UUID) error {
+	tx, err := r.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op once committed
+
+	res, err := tx.ExecContext(ctx, deactivateUserQuery, id)
+	if err != nil {
+		return fmt.Errorf("deactivating user: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrUserNotFound
+	}
+
+	if _, err := tx.ExecContext(ctx, insertAuditLogQuery, actorID, domain.ActionUserDeactivate, domain.AuditTargetUser, id); err != nil {
+		return fmt.Errorf("recording audit log entry: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing transaction: %w", err)
+	}
+	return nil
+}
+
 // translateUniqueViolation maps Postgres's generic "unique_violation"
 // (SQLSTATE 23505) into a specific, callable sentinel error based on
 // which constraint actually fired — "users_username_key" and

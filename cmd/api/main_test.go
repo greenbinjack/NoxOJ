@@ -36,6 +36,7 @@ var stubHandlers = Handlers{
 	Me:                   stubHandler,
 	RequestPasswordReset: stubHandler,
 	ConfirmPasswordReset: stubHandler,
+	DeactivateUser:       stubHandler,
 }
 
 func TestRootRoute(t *testing.T) {
@@ -166,6 +167,45 @@ func TestAdminPingRoute_RequiresAdminRole(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected a plain contestant to get %d, got %d: %s", http.StatusForbidden, rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminDeactivateRoute_RequiresAdminRole(t *testing.T) {
+	r := newRouter(zerolog.Nop(), testJWTSecret, testCORSOrigin, stubHandlers)
+
+	token, err := auth.GenerateAccessToken(uuid.New(), []string{domain.RoleContestant}, testJWTSecret)
+	if err != nil {
+		t.Fatalf("unexpected error generating token: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/"+uuid.New().String()+"/deactivate", nil)
+	req.AddCookie(&http.Cookie{Name: authmw.AccessTokenCookieName, Value: token})
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected a plain contestant to get %d, got %d: %s", http.StatusForbidden, rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminDeactivateRoute_ReachesHandlerForAdmin(t *testing.T) {
+	r := newRouter(zerolog.Nop(), testJWTSecret, testCORSOrigin, stubHandlers)
+
+	token, err := auth.GenerateAccessToken(uuid.New(), []string{domain.RoleAdmin}, testJWTSecret)
+	if err != nil {
+		t.Fatalf("unexpected error generating token: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/"+uuid.New().String()+"/deactivate", nil)
+	req.AddCookie(&http.Cookie{Name: authmw.AccessTokenCookieName, Value: token})
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	// stubHandler always returns 501 — reaching it proves the route
+	// (including its {id} URL parameter) is wired correctly for an
+	// admin.
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("expected the request to reach the handler (%d), got %d", http.StatusNotImplemented, rec.Code)
 	}
 }
 

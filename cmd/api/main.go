@@ -52,6 +52,7 @@ type Handlers struct {
 	Me                   http.HandlerFunc
 	RequestPasswordReset http.HandlerFunc
 	ConfirmPasswordReset http.HandlerFunc
+	DeactivateUser       http.HandlerFunc
 }
 
 // newRouter takes readiness checks and handlers as plain functions,
@@ -101,6 +102,8 @@ func newRouter(
 		w.Write([]byte(`{"status":"ok, you are an admin"}`))
 	})
 
+	r.With(authmw.Authenticate(jwtSecret), authmw.RequireRole(domain.RoleAdmin)).Post("/admin/users/{id}/deactivate", h.DeactivateUser)
+
 	return r
 }
 
@@ -140,7 +143,7 @@ func main() {
 	refreshTokens := tokenstore.NewRefreshTokenStore(redisClient)
 	resetTokens := tokenstore.NewPasswordResetTokenStore(redisClient)
 
-	userHandler := handler.NewUserHandler(logger, users)
+	userHandler := handler.NewUserHandler(logger, users, refreshTokens)
 	authHandler := handler.NewAuthHandler(logger, users, roles, cfg.JWTSecret, loginLimiter, refreshTokens, resetTokens, cfg.Environment)
 
 	r := newRouter(logger, cfg.JWTSecret, cfg.CORSAllowedOrigin, Handlers{
@@ -151,6 +154,7 @@ func main() {
 		Me:                   userHandler.Me,
 		RequestPasswordReset: authHandler.RequestPasswordReset,
 		ConfirmPasswordReset: authHandler.ConfirmPasswordReset,
+		DeactivateUser:       userHandler.Deactivate,
 	}, database.Checker(db), cache.Checker(redisClient))
 
 	addr := fmt.Sprintf(":%d", cfg.Port)

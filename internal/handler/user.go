@@ -7,24 +7,29 @@ import (
 	"net/mail"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 
 	"noxoj/internal/auth"
 	"noxoj/internal/domain"
 	"noxoj/internal/middleware"
 	"noxoj/internal/repository"
+	"noxoj/internal/tokenstore"
 )
 
-// UserHandler owns user-resource concerns (creating an account).
-// Session/token concerns (login, refresh, logout) live in AuthHandler
-// — a different set of responsibilities with different dependencies.
+// UserHandler owns user-resource concerns — creating an account,
+// and (Sprint 14) an admin deactivating one. Session/token concerns
+// (login, refresh, logout, password reset) live in AuthHandler — a
+// different set of responsibilities with different dependencies.
 type UserHandler struct {
-	logger zerolog.Logger
-	users  *repository.UserRepository
+	logger        zerolog.Logger
+	users         *repository.UserRepository
+	refreshTokens *tokenstore.RefreshTokenStore
 }
 
-func NewUserHandler(logger zerolog.Logger, users *repository.UserRepository) *UserHandler {
-	return &UserHandler{logger: logger, users: users}
+func NewUserHandler(logger zerolog.Logger, users *repository.UserRepository, refreshTokens *tokenstore.RefreshTokenStore) *UserHandler {
+	return &UserHandler{logger: logger, users: users, refreshTokens: refreshTokens}
 }
 
 type registerRequest struct {
@@ -191,4 +196,59 @@ func (h *UserHandler) Me(w http.ResponseWriter, r *http.Request) {
 		Rating:      user.Rating,
 		Roles:       roles,
 	})
+}
+
+// Deactivate soft-deletes the user identified by the {id} URL
+// parameter. Must run behind Authenticate + RequireRole(admin) — it
+// trusts the request context to already hold a valid, admin-role
+// actor ID.
+//
+// Refuses to let an admin deactivate their own account: nothing about
+// deactivation itself is exclusive to other users, but a lone admin
+// who accidentally locked themselves out (no reactivation endpoint
+// exists yet, and a self-deactivation would also revoke their own
+// active session below) would have no way back in. This is a cheap,
+// unambiguous guard, not a judgment call worth debating per-request.
+//
+// On success, every refresh token the deactivated user holds is also
+// revoked (RefreshTokenStore.RevokeAllForUser, the same mechanism
+// Sprint 13's password reset uses) — a deactivated account
+// shouldn't get to keep using a session it already had open.
+func (h *UserHandler) Deactivate(w http.ResponseWriter, r *http.Request) {
+	actorID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	targetID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+
+	if targetID == actorID {
+		writeError(w, http.StatusBadRequest, "cannot deactivate your own account")
+		return
+	}
+
+	if err := h.users.Deactivate(r.Context(), targetID, actorID); err != nil {
+		if errors.Is(err, repository.ErrUserNotFound) {
+			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		h.logger.Error().Err(err).Msg("failed to deactivate user")
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	if err := h.refreshTokens.RevokeAllForUser(r.Context(), targetID); err != nil {
+		h.logger.Error().Err(err).Msg("failed to revoke sessions after deactivation")
+		// Not fatal to the request — the account is already
+		// deactivated, which is the security-critical part; a stray
+		// still-valid old session is a smaller residual problem than
+		// failing the whole deactivation over a Redis hiccup.
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "user deactivated"})
 }
