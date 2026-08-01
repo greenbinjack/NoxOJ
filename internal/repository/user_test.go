@@ -95,3 +95,54 @@ func TestUserRepository_Create_DuplicateEmail(t *testing.T) {
 		t.Fatalf("expected ErrEmailTaken, got %v", err)
 	}
 }
+
+func TestUserRepository_GetByUsername(t *testing.T) {
+	db := testDB(t)
+	repo := NewUserRepository(db)
+	ctx := context.Background()
+
+	username := "sprint9_repo_getbyusername"
+	t.Cleanup(func() { db.MustExec("DELETE FROM users WHERE username = $1", username) })
+
+	created, err := repo.Create(ctx, &domain.User{Username: username, DisplayName: "Get Test"})
+	if err != nil {
+		t.Fatalf("unexpected error creating: %v", err)
+	}
+
+	got, err := repo.GetByUsername(ctx, username)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.ID != created.ID {
+		t.Errorf("expected ID %s, got %s", created.ID, got.ID)
+	}
+}
+
+func TestUserRepository_GetByUsername_NotFound(t *testing.T) {
+	db := testDB(t)
+	repo := NewUserRepository(db)
+
+	_, err := repo.GetByUsername(context.Background(), "no_such_user_at_all")
+	if !errors.Is(err, ErrUserNotFound) {
+		t.Fatalf("expected ErrUserNotFound, got %v", err)
+	}
+}
+
+func TestUserRepository_GetByUsername_ExcludesSoftDeleted(t *testing.T) {
+	db := testDB(t)
+	repo := NewUserRepository(db)
+	ctx := context.Background()
+
+	username := "sprint9_repo_deleted_user"
+	t.Cleanup(func() { db.MustExec("DELETE FROM users WHERE username = $1", username) })
+
+	if _, err := repo.Create(ctx, &domain.User{Username: username, DisplayName: "Deleted Test"}); err != nil {
+		t.Fatalf("unexpected error creating: %v", err)
+	}
+	db.MustExec("UPDATE users SET deleted_at = now() WHERE username = $1", username)
+
+	_, err := repo.GetByUsername(ctx, username)
+	if !errors.Is(err, ErrUserNotFound) {
+		t.Fatalf("expected a soft-deleted user to look like ErrUserNotFound, got %v", err)
+	}
+}

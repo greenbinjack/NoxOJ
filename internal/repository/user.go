@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -16,6 +17,7 @@ import (
 var (
 	ErrUsernameTaken = errors.New("username already taken")
 	ErrEmailTaken    = errors.New("email already taken")
+	ErrUserNotFound  = errors.New("user not found")
 )
 
 type UserRepository struct {
@@ -58,6 +60,29 @@ func (r *UserRepository) Create(ctx context.Context, user *domain.User) (*domain
 		}
 	}
 	return &created, nil
+}
+
+const selectByUsernameQuery = `
+	SELECT id, username, email, password_hash, display_name, rating,
+	       created_at, updated_at, is_offline_local, deleted_at
+	FROM users
+	WHERE username = $1 AND deleted_at IS NULL
+`
+
+// GetByUsername looks up a non-deleted user by username. A
+// deactivated account (deleted_at set) is treated identically to a
+// nonexistent one — both return ErrUserNotFound — so a soft-deleted
+// account can't still log in.
+func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*domain.User, error) {
+	var user domain.User
+	err := r.db.GetContext(ctx, &user, selectByUsernameQuery, username)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("looking up user by username: %w", err)
+	}
+	return &user, nil
 }
 
 // translateUniqueViolation maps Postgres's generic "unique_violation"

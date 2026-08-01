@@ -31,11 +31,19 @@ func (e Environment) validate() error {
 	}
 }
 
+// insecureDefaultJWTSecret is intentionally obvious and never valid
+// outside local development — Load refuses to start in production
+// with this value still set, so a forgotten JWT_SECRET fails loudly
+// at startup instead of silently signing every token with a secret
+// anyone can read directly out of this file.
+const insecureDefaultJWTSecret = "insecure-dev-secret-change-in-production"
+
 // Config holds NoxOJ's runtime settings.
 type Config struct {
 	Environment Environment
 	Port        int
 	Postgres    PostgresConfig
+	JWTSecret   []byte
 }
 
 // PostgresConfig holds what's needed to reach the database. Host
@@ -65,6 +73,7 @@ func Load() (*Config, error) {
 	v.SetDefault("POSTGRES_USER", "noxoj")
 	v.SetDefault("POSTGRES_PASSWORD", "noxoj_dev_password")
 	v.SetDefault("POSTGRES_DB", "noxoj")
+	v.SetDefault("JWT_SECRET", insecureDefaultJWTSecret)
 
 	v.SetConfigFile(".env")
 	v.SetConfigType("env")
@@ -83,6 +92,11 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	jwtSecret := v.GetString("JWT_SECRET")
+	if env == Production && jwtSecret == insecureDefaultJWTSecret {
+		return nil, errors.New("JWT_SECRET must be set explicitly in production — refusing to start with the default dev value")
+	}
+
 	return &Config{
 		Environment: env,
 		Port:        v.GetInt("PORT"),
@@ -93,5 +107,6 @@ func Load() (*Config, error) {
 			Password: v.GetString("POSTGRES_PASSWORD"),
 			Name:     v.GetString("POSTGRES_DB"),
 		},
+		JWTSecret: []byte(jwtSecret),
 	}, nil
 }

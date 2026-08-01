@@ -27,3 +27,25 @@ func HashPassword(password string) (string, error) {
 func CheckPassword(hash, password string) error {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
 }
+
+// dummyHash is a real, validly-formatted bcrypt hash of a fixed,
+// meaningless string — computed once at startup, not hardcoded as a
+// magic string. It exists purely so a login attempt against a
+// username that doesn't exist can still run a full bcrypt comparison
+// (see CheckPassword) instead of returning instantly. Without this,
+// "no such user" would respond in microseconds while "wrong
+// password" takes bcrypt's ~100ms, letting an attacker enumerate
+// valid usernames purely by timing responses.
+var dummyHash = func() string {
+	hash, err := HashPassword("dummy-password-used-only-for-timing-safety")
+	if err != nil {
+		panic("auth: failed to compute dummy hash: " + err.Error())
+	}
+	return hash
+}()
+
+// DummyHash returns a real bcrypt hash suitable for a timing-safe
+// comparison when no real user/hash exists to compare against.
+func DummyHash() string {
+	return dummyHash
+}

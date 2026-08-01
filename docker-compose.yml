@@ -33,6 +33,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-noxoj}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-noxoj_dev_password}
       POSTGRES_DB: ${POSTGRES_DB:-noxoj}
+      JWT_SECRET: ${JWT_SECRET:-insecure-dev-secret-change-in-production}
     ports:
       - "${PORT:-8081}:${PORT:-8081}"
     depends_on:

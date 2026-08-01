@@ -15,6 +15,8 @@ import (
 	"noxoj/internal/handler"
 	"noxoj/internal/health"
 	"noxoj/internal/logging"
+	authmw "noxoj/internal/middleware"
+	"noxoj/internal/ratelimit"
 	"noxoj/internal/repository"
 )
 
@@ -36,12 +38,18 @@ func requestLogger(logger zerolog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// newRouter takes readiness checks and the register handler as plain
-// functions, not concrete dependency-heavy types — so route tests
-// that have nothing to do with the database or user registration
-// (TestRootRoute, TestHealthzRoute) never need a live Postgres
-// connection just to construct a router.
-func newRouter(logger zerolog.Logger, registerHandler http.HandlerFunc, readinessChecks ...health.Checker) *chi.Mux {
+// newRouter takes readiness checks and handlers as plain functions,
+// not concrete dependency-heavy types — so route tests that have
+// nothing to do with the database or auth (TestRootRoute,
+// TestHealthzRoute) never need live infrastructure just to construct
+// a router.
+func newRouter(
+	logger zerolog.Logger,
+	jwtSecret []byte,
+	registerHandler http.HandlerFunc,
+	loginHandler http.HandlerFunc,
+	readinessChecks ...health.Checker,
+) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(requestLogger(logger))
 
@@ -53,6 +61,16 @@ func newRouter(logger zerolog.Logger, registerHandler http.HandlerFunc, readines
 	r.Get("/readyz", health.Readiness(readinessChecks...))
 
 	r.Post("/register", registerHandler)
+	r.Post("/login", loginHandler)
+
+	// Minimal proof the auth chain (login -> cookie -> middleware ->
+	// handler) actually works end to end. Not the real profile API —
+	// that's Sprint 12; this just returns the authenticated user's ID.
+	r.With(authmw.Authenticate(jwtSecret)).Get("/me", func(w http.ResponseWriter, r *http.Request) {
+		userID, _ := authmw.UserIDFromContext(r.Context())
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"user_id":"%s"}`, userID.String())
+	})
 
 	return r
 }
@@ -78,9 +96,10 @@ func main() {
 	}
 	defer db.Close()
 
-	userHandler := handler.NewUserHandler(logger, repository.NewUserRepository(db))
+	loginLimiter := ratelimit.NewLoginLimiter(5, 15*time.Minute)
+	userHandler := handler.NewUserHandler(logger, repository.NewUserRepository(db), cfg.JWTSecret, loginLimiter, cfg.Environment)
 
-	r := newRouter(logger, userHandler.Register, database.Checker(db))
+	r := newRouter(logger, cfg.JWTSecret, userHandler.Register, userHandler.Login, database.Checker(db))
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	logger.Info().Str("addr", addr).Str("environment", string(cfg.Environment)).Msg("NoxOJ API starting")
