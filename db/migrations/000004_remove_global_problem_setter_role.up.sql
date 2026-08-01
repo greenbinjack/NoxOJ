@@ -1,0 +1,12 @@
+-- Problem authorship no longer needs a global platform role: it's
+-- peer-delegated via a future contest_staff table (any user can
+-- author problems for a contest they're staff on, including their
+-- own, once Contest Management ships in Phase 5). The shared platform
+-- problem library will be curated by admin approval on individual
+-- problems, not gated by who's pre-authorized to write them at all.
+-- See ARCHITECTURE.md §4.2 design note for the full reasoning.
+--
+-- Safe as a plain DELETE: no user has ever held this role (verified
+-- before writing this migration), so there's no user_roles row
+-- referencing it to violate the foreign key.
+DELETE FROM roles WHERE name = 'problem_setter';

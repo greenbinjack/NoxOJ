@@ -63,7 +63,9 @@ func TestRolesSeeded(t *testing.T) {
 		t.Fatalf("unexpected error querying roles: %v", err)
 	}
 
-	want := []string{"admin", "problem_setter", "contestant", "judge_operator"}
+	// Only 3 roles remain after migration 000004 removed the global
+	// "problem_setter" role — see ARCHITECTURE.md §4.2's design note.
+	want := []string{"admin", "contestant", "judge_operator"}
 	if len(roles) != len(want) {
 		t.Fatalf("expected %d seeded roles, got %d: %+v", len(want), len(roles), roles)
 	}

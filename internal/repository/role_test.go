@@ -22,7 +22,7 @@ func TestRoleRepository_AssignAndGetRoleNames(t *testing.T) {
 		t.Fatalf("unexpected error creating user: %v", err)
 	}
 
-	if err := roles.AssignRole(ctx, user.ID, domain.RoleProblemSetter); err != nil {
+	if err := roles.AssignRole(ctx, user.ID, domain.RoleJudgeOperator); err != nil {
 		t.Fatalf("unexpected error assigning role: %v", err)
 	}
 
@@ -30,8 +30,8 @@ func TestRoleRepository_AssignAndGetRoleNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error getting role names: %v", err)
 	}
-	if len(names) != 1 || names[0] != domain.RoleProblemSetter {
-		t.Errorf("expected [%q], got %v", domain.RoleProblemSetter, names)
+	if len(names) != 1 || names[0] != domain.RoleJudgeOperator {
+		t.Errorf("expected [%q], got %v", domain.RoleJudgeOperator, names)
 	}
 }
 

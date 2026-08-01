@@ -31,14 +31,23 @@ type Role struct {
 	Name string `db:"name"`
 }
 
-// The four roles seeded by migration 000002 (ARCHITECTURE.md §4.2).
-// Named as constants so a typo in a role name fails to compile
-// instead of silently matching nothing at runtime.
+// The three global platform roles, seeded by migration 000002 and
+// trimmed by migration 000004 (ARCHITECTURE.md §4.2). Named as
+// constants so a typo in a role name fails to compile instead of
+// silently matching nothing at runtime.
+//
+// There is deliberately no global "problem setter" role. Problem
+// authorship is peer-delegated per contest (any user can author
+// problems for a contest they're staff on, once Contest Management
+// ships) rather than gated by a platform-wide role — see the design
+// note in ARCHITECTURE.md §4.2. A "moderator" role (for curating
+// which problems get promoted into the shared platform library,
+// currently an admin duty) is a deliberately-noted future extension
+// point, not built until the review workload actually needs it.
 const (
-	RoleAdmin          = "admin"
-	RoleProblemSetter  = "problem_setter"
-	RoleContestant     = "contestant"
-	RoleJudgeOperator  = "judge_operator"
+	RoleAdmin         = "admin"
+	RoleContestant    = "contestant"
+	RoleJudgeOperator = "judge_operator"
 
 	// DefaultRole is granted automatically on registration — every
 	// new account starts as a plain contestant; every other role is
