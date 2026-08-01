@@ -19,6 +19,7 @@ type User struct {
 	DisplayName    string     `db:"display_name"`
 	Rating         int        `db:"rating"`
 	CreatedAt      time.Time  `db:"created_at"`
+	UpdatedAt      time.Time  `db:"updated_at"`
 	IsOfflineLocal bool       `db:"is_offline_local"`
 	DeletedAt      *time.Time `db:"deleted_at"`
 }
