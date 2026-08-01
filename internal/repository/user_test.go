@@ -178,3 +178,59 @@ func TestUserRepository_GetByID_NotFound(t *testing.T) {
 		t.Fatalf("expected ErrUserNotFound, got %v", err)
 	}
 }
+
+func TestUserRepository_UpdatePassword(t *testing.T) {
+	db := testDB(t)
+	repo := NewUserRepository(db)
+	ctx := context.Background()
+
+	username := "sprint13_repo_updatepassword"
+	t.Cleanup(func() { db.MustExec("DELETE FROM users WHERE username = $1", username) })
+
+	created, err := repo.Create(ctx, &domain.User{Username: username, DisplayName: "UpdatePassword Test"})
+	if err != nil {
+		t.Fatalf("unexpected error creating: %v", err)
+	}
+
+	if err := repo.UpdatePassword(ctx, created.ID, "a-new-bcrypt-hash"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, err := repo.GetByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("unexpected error re-fetching: %v", err)
+	}
+	if got.PasswordHash == nil || *got.PasswordHash != "a-new-bcrypt-hash" {
+		t.Errorf("expected password hash to be updated, got %v", got.PasswordHash)
+	}
+}
+
+func TestUserRepository_UpdatePassword_NotFound(t *testing.T) {
+	db := testDB(t)
+	repo := NewUserRepository(db)
+
+	err := repo.UpdatePassword(context.Background(), uuid.New(), "irrelevant-hash")
+	if !errors.Is(err, ErrUserNotFound) {
+		t.Fatalf("expected ErrUserNotFound, got %v", err)
+	}
+}
+
+func TestUserRepository_UpdatePassword_ExcludesSoftDeleted(t *testing.T) {
+	db := testDB(t)
+	repo := NewUserRepository(db)
+	ctx := context.Background()
+
+	username := "sprint13_repo_updatepassword_deleted"
+	t.Cleanup(func() { db.MustExec("DELETE FROM users WHERE username = $1", username) })
+
+	created, err := repo.Create(ctx, &domain.User{Username: username, DisplayName: "Deleted Test"})
+	if err != nil {
+		t.Fatalf("unexpected error creating: %v", err)
+	}
+	db.MustExec("UPDATE users SET deleted_at = now() WHERE id = $1", created.ID)
+
+	err = repo.UpdatePassword(ctx, created.ID, "irrelevant-hash")
+	if !errors.Is(err, ErrUserNotFound) {
+		t.Fatalf("expected a soft-deleted user's password update to look like ErrUserNotFound, got %v", err)
+	}
+}

@@ -29,11 +29,13 @@ func stubHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 var stubHandlers = Handlers{
-	Register: stubHandler,
-	Login:    stubHandler,
-	Refresh:  stubHandler,
-	Logout:   stubHandler,
-	Me:       stubHandler,
+	Register:             stubHandler,
+	Login:                stubHandler,
+	Refresh:              stubHandler,
+	Logout:               stubHandler,
+	Me:                   stubHandler,
+	RequestPasswordReset: stubHandler,
+	ConfirmPasswordReset: stubHandler,
 }
 
 func TestRootRoute(t *testing.T) {
@@ -117,6 +119,33 @@ func TestUsersMeRoute_ReachesHandlerWhenAuthenticated(t *testing.T) {
 
 	// stubHandler always returns 501 — reaching it (not a 401 from
 	// Authenticate) is what proves the route is wired correctly.
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("expected the request to reach the handler (%d), got %d", http.StatusNotImplemented, rec.Code)
+	}
+}
+
+func TestPasswordResetRequestRoute(t *testing.T) {
+	r := newRouter(zerolog.Nop(), testJWTSecret, testCORSOrigin, stubHandlers)
+
+	req := httptest.NewRequest(http.MethodPost, "/password-reset/request", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	// stubHandler always returns 501 — reaching it proves the route is
+	// wired, unauthenticated (a forgotten password means no valid
+	// session to authenticate with).
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("expected the request to reach the handler (%d), got %d", http.StatusNotImplemented, rec.Code)
+	}
+}
+
+func TestPasswordResetConfirmRoute(t *testing.T) {
+	r := newRouter(zerolog.Nop(), testJWTSecret, testCORSOrigin, stubHandlers)
+
+	req := httptest.NewRequest(http.MethodPost, "/password-reset/confirm", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
 	if rec.Code != http.StatusNotImplemented {
 		t.Fatalf("expected the request to reach the handler (%d), got %d", http.StatusNotImplemented, rec.Code)
 	}

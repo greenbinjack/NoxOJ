@@ -45,11 +45,13 @@ func requestLogger(logger zerolog.Logger) func(http.Handler) http.Handler {
 // Handlers bundles the route handlers newRouter needs — a struct
 // instead of a growing pile of positional http.HandlerFunc arguments.
 type Handlers struct {
-	Register http.HandlerFunc
-	Login    http.HandlerFunc
-	Refresh  http.HandlerFunc
-	Logout   http.HandlerFunc
-	Me       http.HandlerFunc
+	Register             http.HandlerFunc
+	Login                http.HandlerFunc
+	Refresh              http.HandlerFunc
+	Logout               http.HandlerFunc
+	Me                   http.HandlerFunc
+	RequestPasswordReset http.HandlerFunc
+	ConfirmPasswordReset http.HandlerFunc
 }
 
 // newRouter takes readiness checks and handlers as plain functions,
@@ -87,6 +89,8 @@ func newRouter(
 	r.Post("/login", h.Login)
 	r.Post("/refresh", h.Refresh)
 	r.Post("/logout", h.Logout)
+	r.Post("/password-reset/request", h.RequestPasswordReset)
+	r.Post("/password-reset/confirm", h.ConfirmPasswordReset)
 
 	r.With(authmw.Authenticate(jwtSecret)).Get("/users/me", h.Me)
 
@@ -134,16 +138,19 @@ func main() {
 	roles := repository.NewRoleRepository(db)
 	loginLimiter := ratelimit.NewLoginLimiter(5, 15*time.Minute)
 	refreshTokens := tokenstore.NewRefreshTokenStore(redisClient)
+	resetTokens := tokenstore.NewPasswordResetTokenStore(redisClient)
 
 	userHandler := handler.NewUserHandler(logger, users)
-	authHandler := handler.NewAuthHandler(logger, users, roles, cfg.JWTSecret, loginLimiter, refreshTokens, cfg.Environment)
+	authHandler := handler.NewAuthHandler(logger, users, roles, cfg.JWTSecret, loginLimiter, refreshTokens, resetTokens, cfg.Environment)
 
 	r := newRouter(logger, cfg.JWTSecret, cfg.CORSAllowedOrigin, Handlers{
-		Register: userHandler.Register,
-		Login:    authHandler.Login,
-		Refresh:  authHandler.Refresh,
-		Logout:   authHandler.Logout,
-		Me:       userHandler.Me,
+		Register:             userHandler.Register,
+		Login:                authHandler.Login,
+		Refresh:              authHandler.Refresh,
+		Logout:               authHandler.Logout,
+		Me:                   userHandler.Me,
+		RequestPasswordReset: authHandler.RequestPasswordReset,
+		ConfirmPasswordReset: authHandler.ConfirmPasswordReset,
 	}, database.Checker(db), cache.Checker(redisClient))
 
 	addr := fmt.Sprintf(":%d", cfg.Port)

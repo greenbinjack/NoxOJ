@@ -44,6 +44,21 @@ type registerResponse struct {
 	Rating      int     `json:"rating"`
 }
 
+// validatePassword is shared by registration and password reset
+// (Sprint 13) — both need the same floor (real brute-force
+// resistance) and ceiling (bcrypt silently truncates anything past 72
+// bytes, so a longer password would quietly lose its extra length
+// rather than actually being enforced).
+func validatePassword(password string) error {
+	if len(password) < 8 {
+		return errors.New("password must be at least 8 characters")
+	}
+	if len(password) > 72 {
+		return errors.New("password must be at most 72 characters")
+	}
+	return nil
+}
+
 func (req registerRequest) validate() error {
 	username := strings.TrimSpace(req.Username)
 	if len(username) < 3 || len(username) > 32 {
@@ -58,13 +73,8 @@ func (req registerRequest) validate() error {
 		}
 	}
 
-	if len(req.Password) < 8 {
-		return errors.New("password must be at least 8 characters")
-	}
-	// bcrypt silently ignores any input past 72 bytes — reject early
-	// instead of letting a long password quietly lose its extra length.
-	if len(req.Password) > 72 {
-		return errors.New("password must be at most 72 characters")
+	if err := validatePassword(req.Password); err != nil {
+		return err
 	}
 
 	if strings.TrimSpace(req.DisplayName) == "" {

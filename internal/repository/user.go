@@ -152,6 +152,30 @@ func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Use
 	return &user, nil
 }
 
+const updatePasswordQuery = `
+	UPDATE users SET password_hash = $1, updated_at = now()
+	WHERE id = $2 AND deleted_at IS NULL
+`
+
+// UpdatePassword sets a new bcrypt hash for id — used by the
+// password-reset flow (Sprint 13). Scoped to non-deleted accounts,
+// same as every other by-id lookup; a soft-deleted account can't have
+// its password "reset" back into a usable one.
+func (r *UserRepository) UpdatePassword(ctx context.Context, id uuid.UUID, passwordHash string) error {
+	res, err := r.db.ExecContext(ctx, updatePasswordQuery, passwordHash, id)
+	if err != nil {
+		return fmt.Errorf("updating password: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
 // translateUniqueViolation maps Postgres's generic "unique_violation"
 // (SQLSTATE 23505) into a specific, callable sentinel error based on
 // which constraint actually fired — "users_username_key" and

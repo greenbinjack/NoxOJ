@@ -1,12 +1,15 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
 	"github.com/redis/go-redis/v9"
 
 	"noxoj/internal/auth"
@@ -29,10 +32,25 @@ func testAuthHandler(t *testing.T) (*AuthHandler, *UserHandler) {
 	roles := repository.NewRoleRepository(db)
 	limiter := ratelimit.NewLoginLimiter(5, 15*time.Minute)
 	refreshTokens := tokenstore.NewRefreshTokenStore(redisClient)
+	resetTokens := tokenstore.NewPasswordResetTokenStore(redisClient)
 
-	auth := NewAuthHandler(testLoggerNop(), users, roles, testJWTSecret, limiter, refreshTokens, config.Development)
+	auth := NewAuthHandler(testLoggerNop(), users, roles, testJWTSecret, limiter, refreshTokens, resetTokens, config.Development)
 	user := NewUserHandler(testLoggerNop(), users)
 	return auth, user
+}
+
+// lookUpUserID fetches a user's ID directly via SQL — the reset-token
+// tests need a real user ID to issue a token against, but issuing a
+// token is normally RequestPasswordReset's job (tested separately);
+// these tests are about ConfirmPasswordReset, so they set up the
+// token directly rather than going through the request step twice.
+func lookUpUserID(t *testing.T, db *sqlx.DB, username string) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	if err := db.Get(&id, "SELECT id FROM users WHERE username = $1", username); err != nil {
+		t.Fatalf("setup: unexpected error looking up user id: %v", err)
+	}
+	return id
 }
 
 func doLogin(t *testing.T, h *AuthHandler, body map[string]any) *httptest.ResponseRecorder {
@@ -263,5 +281,171 @@ func TestLogin_NonexistentUser_GenericError(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "invalid username or password") {
 		t.Errorf("expected the generic invalid-credentials message, got: %s", rec.Body.String())
+	}
+}
+
+func doPasswordResetRequest(t *testing.T, h *AuthHandler, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	return doRequest(t, h.RequestPasswordReset, "/password-reset/request", body)
+}
+
+func doPasswordResetConfirm(t *testing.T, h *AuthHandler, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	return doRequest(t, h.ConfirmPasswordReset, "/password-reset/confirm", body)
+}
+
+func TestRequestPasswordReset_KnownUser_GenericResponse(t *testing.T) {
+	authH, userH := testAuthHandler(t)
+	db := testHandlerDB(t)
+	username := "sprint13_reset_known"
+	t.Cleanup(func() { db.MustExec("DELETE FROM users WHERE username = $1", username) })
+
+	doRegister(t, userH, map[string]any{"username": username, "password": "correct-horse-battery", "display_name": "X"})
+
+	rec := doPasswordResetRequest(t, authH, map[string]any{"username": username})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+}
+
+func TestRequestPasswordReset_UnknownUser_SameGenericResponse(t *testing.T) {
+	authH, _ := testAuthHandler(t)
+
+	known := doPasswordResetRequest(t, authH, map[string]any{"username": "no_such_user_ever_for_reset"})
+	if known.Code != http.StatusOK {
+		t.Fatalf("expected %d for an unknown username (enumeration resistance), got %d: %s", http.StatusOK, known.Code, known.Body.String())
+	}
+}
+
+func TestRequestPasswordReset_KnownAndUnknownUsers_IdenticalBody(t *testing.T) {
+	authH, userH := testAuthHandler(t)
+	db := testHandlerDB(t)
+	username := "sprint13_reset_identical_body"
+	t.Cleanup(func() { db.MustExec("DELETE FROM users WHERE username = $1", username) })
+
+	doRegister(t, userH, map[string]any{"username": username, "password": "correct-horse-battery", "display_name": "X"})
+
+	knownRec := doPasswordResetRequest(t, authH, map[string]any{"username": username})
+	unknownRec := doPasswordResetRequest(t, authH, map[string]any{"username": "definitely_not_a_real_user"})
+
+	if knownRec.Body.String() != unknownRec.Body.String() {
+		t.Errorf("expected identical response bodies for known vs unknown usernames (enumeration resistance), got %q vs %q",
+			knownRec.Body.String(), unknownRec.Body.String())
+	}
+}
+
+func TestConfirmPasswordReset_Success(t *testing.T) {
+	authH, userH := testAuthHandler(t)
+	db := testHandlerDB(t)
+	username := "sprint13_reset_confirm_ok"
+	oldPassword := "correct-horse-battery"
+	newPassword := "new-correct-horse-battery"
+	t.Cleanup(func() { db.MustExec("DELETE FROM users WHERE username = $1", username) })
+
+	doRegister(t, userH, map[string]any{"username": username, "password": oldPassword, "display_name": "X"})
+
+	token, err := authH.resetTokens.Issue(context.Background(), lookUpUserID(t, db, username))
+	if err != nil {
+		t.Fatalf("setup: unexpected error issuing reset token: %v", err)
+	}
+
+	rec := doPasswordResetConfirm(t, authH, map[string]any{"token": token, "new_password": newPassword})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	// The old password must no longer work...
+	oldLogin := doLogin(t, authH, map[string]any{"username": username, "password": oldPassword})
+	if oldLogin.Code != http.StatusUnauthorized {
+		t.Errorf("expected the old password to be rejected (%d), got %d", http.StatusUnauthorized, oldLogin.Code)
+	}
+
+	// ...and the new one must.
+	newLogin := doLogin(t, authH, map[string]any{"username": username, "password": newPassword})
+	if newLogin.Code != http.StatusOK {
+		t.Errorf("expected the new password to work (%d), got %d: %s", http.StatusOK, newLogin.Code, newLogin.Body.String())
+	}
+}
+
+func TestConfirmPasswordReset_RevokesExistingSessions(t *testing.T) {
+	authH, userH := testAuthHandler(t)
+	db := testHandlerDB(t)
+	username := "sprint13_reset_revokes_sessions"
+	t.Cleanup(func() { db.MustExec("DELETE FROM users WHERE username = $1", username) })
+
+	loginRec := registerAndLogin(t, authH, userH, username, "correct-horse-battery")
+	refreshCookie := cookieFrom(loginRec, authmw.RefreshTokenCookieName)
+	if refreshCookie == nil {
+		t.Fatal("setup: expected a refresh_token cookie from login")
+	}
+
+	token, err := authH.resetTokens.Issue(context.Background(), lookUpUserID(t, db, username))
+	if err != nil {
+		t.Fatalf("setup: unexpected error issuing reset token: %v", err)
+	}
+	if rec := doPasswordResetConfirm(t, authH, map[string]any{"token": token, "new_password": "brand-new-password"}); rec.Code != http.StatusOK {
+		t.Fatalf("setup: expected reset confirm to succeed, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// The refresh token issued before the reset must no longer work —
+	// this is what proves RevokeAllForUser actually ran.
+	refreshReq := httptest.NewRequest(http.MethodPost, "/refresh", nil)
+	refreshReq.AddCookie(refreshCookie)
+	refreshRec := httptest.NewRecorder()
+	authH.Refresh(refreshRec, refreshReq)
+	if refreshRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected the pre-reset refresh token to be revoked (%d), got %d", http.StatusUnauthorized, refreshRec.Code)
+	}
+}
+
+func TestConfirmPasswordReset_InvalidToken(t *testing.T) {
+	authH, _ := testAuthHandler(t)
+
+	rec := doPasswordResetConfirm(t, authH, map[string]any{"token": "this-token-was-never-issued", "new_password": "brand-new-password"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+}
+
+func TestConfirmPasswordReset_TokenIsOneTimeUse(t *testing.T) {
+	authH, userH := testAuthHandler(t)
+	db := testHandlerDB(t)
+	username := "sprint13_reset_onetime"
+	t.Cleanup(func() { db.MustExec("DELETE FROM users WHERE username = $1", username) })
+
+	doRegister(t, userH, map[string]any{"username": username, "password": "correct-horse-battery", "display_name": "X"})
+
+	token, err := authH.resetTokens.Issue(context.Background(), lookUpUserID(t, db, username))
+	if err != nil {
+		t.Fatalf("setup: unexpected error issuing reset token: %v", err)
+	}
+
+	first := doPasswordResetConfirm(t, authH, map[string]any{"token": token, "new_password": "first-new-password"})
+	if first.Code != http.StatusOK {
+		t.Fatalf("expected the first confirm to succeed, got %d: %s", first.Code, first.Body.String())
+	}
+
+	second := doPasswordResetConfirm(t, authH, map[string]any{"token": token, "new_password": "second-new-password"})
+	if second.Code != http.StatusBadRequest {
+		t.Fatalf("expected reusing the same reset token to fail (%d), got %d", http.StatusBadRequest, second.Code)
+	}
+}
+
+func TestConfirmPasswordReset_RejectsShortPassword(t *testing.T) {
+	authH, userH := testAuthHandler(t)
+	db := testHandlerDB(t)
+	username := "sprint13_reset_short_password"
+	t.Cleanup(func() { db.MustExec("DELETE FROM users WHERE username = $1", username) })
+
+	doRegister(t, userH, map[string]any{"username": username, "password": "correct-horse-battery", "display_name": "X"})
+
+	token, err := authH.resetTokens.Issue(context.Background(), lookUpUserID(t, db, username))
+	if err != nil {
+		t.Fatalf("setup: unexpected error issuing reset token: %v", err)
+	}
+
+	rec := doPasswordResetConfirm(t, authH, map[string]any{"token": token, "new_password": "short"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d for a too-short password, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
 	}
 }
