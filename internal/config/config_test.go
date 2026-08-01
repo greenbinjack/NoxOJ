@@ -13,6 +13,9 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.Port != 8081 {
 		t.Errorf("expected default port 8081, got %d", cfg.Port)
 	}
+	if cfg.Postgres.Host != "localhost" || cfg.Postgres.Port != 5432 || cfg.Postgres.Name != "noxoj" {
+		t.Errorf("unexpected default postgres config: %+v", cfg.Postgres)
+	}
 }
 
 func TestLoad_EnvVarsOverrideDefaults(t *testing.T) {

@@ -26,6 +26,13 @@ services:
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-development}
       PORT: ${PORT:-8081}
+      # "postgres" — the Compose service name — not "localhost": inside
+      # the container, that's the only way to reach the postgres service.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-noxoj}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-noxoj_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-noxoj}
     ports:
       - "${PORT:-8081}:${PORT:-8081}"
     depends_on:

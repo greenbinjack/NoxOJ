@@ -35,6 +35,22 @@ func (e Environment) validate() error {
 type Config struct {
 	Environment Environment
 	Port        int
+	Postgres    PostgresConfig
+}
+
+// PostgresConfig holds what's needed to reach the database. Host
+// defaults to "localhost" for running the app bare-metal against a
+// docker-compose Postgres on its published port; the containerized
+// api service overrides it to "postgres" (the Compose service name)
+// via docker-compose.yml's environment block — same config, same
+// code, different value per deployment, exactly the environment
+// parity principle this package exists to enforce.
+type PostgresConfig struct {
+	Host     string
+	Port     int
+	User     string
+	Password string
+	Name     string
 }
 
 // Load reads config from (in increasing priority) built-in defaults,
@@ -44,6 +60,11 @@ func Load() (*Config, error) {
 
 	v.SetDefault("ENVIRONMENT", string(Development))
 	v.SetDefault("PORT", 8081)
+	v.SetDefault("POSTGRES_HOST", "localhost")
+	v.SetDefault("POSTGRES_PORT", 5432)
+	v.SetDefault("POSTGRES_USER", "noxoj")
+	v.SetDefault("POSTGRES_PASSWORD", "noxoj_dev_password")
+	v.SetDefault("POSTGRES_DB", "noxoj")
 
 	v.SetConfigFile(".env")
 	v.SetConfigType("env")
@@ -65,5 +86,12 @@ func Load() (*Config, error) {
 	return &Config{
 		Environment: env,
 		Port:        v.GetInt("PORT"),
+		Postgres: PostgresConfig{
+			Host:     v.GetString("POSTGRES_HOST"),
+			Port:     v.GetInt("POSTGRES_PORT"),
+			User:     v.GetString("POSTGRES_USER"),
+			Password: v.GetString("POSTGRES_PASSWORD"),
+			Name:     v.GetString("POSTGRES_DB"),
+		},
 	}, nil
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"noxoj/internal/config"
+	"noxoj/internal/database"
 	"noxoj/internal/health"
 	"noxoj/internal/logging"
 )
@@ -33,7 +34,11 @@ func requestLogger(logger zerolog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-func newRouter(logger zerolog.Logger) *chi.Mux {
+// newRouter takes readiness checks as plain health.Checker functions,
+// not a *sqlx.DB directly — so route tests that have nothing to do
+// with the database (TestRootRoute, TestHealthzRoute) never need a
+// live Postgres connection just to construct a router.
+func newRouter(logger zerolog.Logger, readinessChecks ...health.Checker) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(requestLogger(logger))
 
@@ -42,7 +47,7 @@ func newRouter(logger zerolog.Logger) *chi.Mux {
 	})
 
 	r.Get("/healthz", health.Liveness)
-	r.Get("/readyz", health.Readiness())
+	r.Get("/readyz", health.Readiness(readinessChecks...))
 
 	return r
 }
@@ -56,7 +61,19 @@ func main() {
 
 	logger := logging.New(cfg.Environment)
 
-	r := newRouter(logger)
+	db, err := database.Connect(database.Config{
+		Host:     cfg.Postgres.Host,
+		Port:     cfg.Postgres.Port,
+		User:     cfg.Postgres.User,
+		Password: cfg.Postgres.Password,
+		Name:     cfg.Postgres.Name,
+	})
+	if err != nil {
+		logger.Fatal().Err(err).Msg("failed to connect to database")
+	}
+	defer db.Close()
+
+	r := newRouter(logger, database.Checker(db))
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	logger.Info().Str("addr", addr).Str("environment", string(cfg.Environment)).Msg("NoxOJ API starting")
