@@ -14,11 +14,16 @@ import (
 	authmw "noxoj/internal/middleware"
 )
 
-var testJWTSecret = []byte("test-secret-for-main-tests")
+var (
+	testJWTSecret  = []byte("test-secret-for-main-tests")
+	testCORSOrigin = "http://localhost:5173"
+)
 
 // stubHandler stands in for real handlers in tests that have nothing
 // to do with what that handler does — they shouldn't need a live
-// database connection just to construct a router.
+// database connection just to construct a router. The real behavior
+// of Register/Login/Refresh/Logout/Me is tested where they actually
+// live, in internal/handler — these tests only cover routing/wiring.
 func stubHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
@@ -28,10 +33,11 @@ var stubHandlers = Handlers{
 	Login:    stubHandler,
 	Refresh:  stubHandler,
 	Logout:   stubHandler,
+	Me:       stubHandler,
 }
 
 func TestRootRoute(t *testing.T) {
-	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandlers)
+	r := newRouter(zerolog.Nop(), testJWTSecret, testCORSOrigin, stubHandlers)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
@@ -48,7 +54,7 @@ func TestRootRoute(t *testing.T) {
 }
 
 func TestHealthzRoute(t *testing.T) {
-	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandlers)
+	r := newRouter(zerolog.Nop(), testJWTSecret, testCORSOrigin, stubHandlers)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
@@ -60,7 +66,7 @@ func TestHealthzRoute(t *testing.T) {
 }
 
 func TestReadyzRoute(t *testing.T) {
-	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandlers)
+	r := newRouter(zerolog.Nop(), testJWTSecret, testCORSOrigin, stubHandlers)
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
@@ -73,7 +79,7 @@ func TestReadyzRoute(t *testing.T) {
 
 func TestReadyzRoute_FailsWhenADependencyIsDown(t *testing.T) {
 	failingCheck := func() error { return errors.New("database unreachable") }
-	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandlers, failingCheck)
+	r := newRouter(zerolog.Nop(), testJWTSecret, testCORSOrigin, stubHandlers, failingCheck)
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
@@ -84,10 +90,10 @@ func TestReadyzRoute_FailsWhenADependencyIsDown(t *testing.T) {
 	}
 }
 
-func TestMeRoute_RequiresAuthentication(t *testing.T) {
-	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandlers)
+func TestUsersMeRoute_RequiresAuthentication(t *testing.T) {
+	r := newRouter(zerolog.Nop(), testJWTSecret, testCORSOrigin, stubHandlers)
 
-	req := httptest.NewRequest(http.MethodGet, "/me", nil)
+	req := httptest.NewRequest(http.MethodGet, "/users/me", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -96,31 +102,28 @@ func TestMeRoute_RequiresAuthentication(t *testing.T) {
 	}
 }
 
-func TestMeRoute_ReturnsAuthenticatedUserID(t *testing.T) {
-	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandlers)
+func TestUsersMeRoute_ReachesHandlerWhenAuthenticated(t *testing.T) {
+	r := newRouter(zerolog.Nop(), testJWTSecret, testCORSOrigin, stubHandlers)
 
-	userID := uuid.New()
-	token, err := auth.GenerateAccessToken(userID, []string{domain.RoleContestant}, testJWTSecret)
+	token, err := auth.GenerateAccessToken(uuid.New(), []string{domain.RoleContestant}, testJWTSecret)
 	if err != nil {
 		t.Fatalf("unexpected error generating token: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/me", nil)
+	req := httptest.NewRequest(http.MethodGet, "/users/me", nil)
 	req.AddCookie(&http.Cookie{Name: authmw.AccessTokenCookieName, Value: token})
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
-	}
-	want := `{"user_id":"` + userID.String() + `","roles":["contestant"]}`
-	if got := rec.Body.String(); got != want {
-		t.Fatalf("expected body %q, got %q", want, got)
+	// stubHandler always returns 501 — reaching it (not a 401 from
+	// Authenticate) is what proves the route is wired correctly.
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("expected the request to reach the handler (%d), got %d", http.StatusNotImplemented, rec.Code)
 	}
 }
 
 func TestAdminPingRoute_RequiresAdminRole(t *testing.T) {
-	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandlers)
+	r := newRouter(zerolog.Nop(), testJWTSecret, testCORSOrigin, stubHandlers)
 
 	token, err := auth.GenerateAccessToken(uuid.New(), []string{domain.RoleContestant}, testJWTSecret)
 	if err != nil {
@@ -138,7 +141,7 @@ func TestAdminPingRoute_RequiresAdminRole(t *testing.T) {
 }
 
 func TestAdminPingRoute_AllowsAdmin(t *testing.T) {
-	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandlers)
+	r := newRouter(zerolog.Nop(), testJWTSecret, testCORSOrigin, stubHandlers)
 
 	token, err := auth.GenerateAccessToken(uuid.New(), []string{domain.RoleContestant, domain.RoleAdmin}, testJWTSecret)
 	if err != nil {

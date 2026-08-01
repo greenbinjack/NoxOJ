@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jmoiron/sqlx"
 
@@ -124,6 +125,29 @@ func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*d
 	}
 	if err != nil {
 		return nil, fmt.Errorf("looking up user by username: %w", err)
+	}
+	return &user, nil
+}
+
+const selectByIDQuery = `
+	SELECT id, username, email, password_hash, display_name, rating,
+	       created_at, updated_at, is_offline_local, deleted_at
+	FROM users
+	WHERE id = $1 AND deleted_at IS NULL
+`
+
+// GetByID looks up a non-deleted user by id — the read behind
+// GET /users/me: the authenticated user's ID comes from their
+// already-verified token (see internal/middleware), this just fetches
+// the current row for it. Same soft-delete exclusion as GetByUsername.
+func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.User, error) {
+	var user domain.User
+	err := r.db.GetContext(ctx, &user, selectByIDQuery, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("looking up user by id: %w", err)
 	}
 	return &user, nil
 }

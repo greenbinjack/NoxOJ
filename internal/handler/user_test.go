@@ -8,10 +8,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/zerolog"
 
+	"noxoj/internal/auth"
 	"noxoj/internal/database"
+	"noxoj/internal/middleware"
 	"noxoj/internal/repository"
 )
 
@@ -114,5 +117,64 @@ func TestRegister_InvalidInput(t *testing.T) {
 				t.Errorf("expected %d, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestMe_ReturnsFreshProfileAndTokenRoles(t *testing.T) {
+	h, db := testUserHandler(t)
+	username := "sprint12_me_ok"
+	t.Cleanup(func() { db.MustExec("DELETE FROM users WHERE username = $1", username) })
+
+	reg := doRegister(t, h, map[string]any{"username": username, "password": "correct-horse-battery", "display_name": "Me Test"})
+	if reg.Code != http.StatusCreated {
+		t.Fatalf("setup: expected registration to succeed, got %d: %s", reg.Code, reg.Body.String())
+	}
+	var registered registerResponse
+	if err := json.Unmarshal(reg.Body.Bytes(), &registered); err != nil {
+		t.Fatalf("unexpected error decoding register response: %v", err)
+	}
+
+	// Deliberately embed a DIFFERENT role in the token than what's
+	// actually in the database — proves Roles in the response comes
+	// from the token (context), not a fresh DB query, per Sprint 11's
+	// design (a promotion/demotion only takes effect on next
+	// login/refresh, and /me should reflect exactly that, not bypass it).
+	token, err := auth.GenerateAccessToken(uuid.MustParse(registered.ID), []string{"admin"}, testJWTSecret)
+	if err != nil {
+		t.Fatalf("unexpected error generating token: %v", err)
+	}
+
+	protected := middleware.Authenticate(testJWTSecret)(http.HandlerFunc(h.Me))
+	req := httptest.NewRequest(http.MethodGet, "/users/me", nil)
+	req.AddCookie(&http.Cookie{Name: middleware.AccessTokenCookieName, Value: token})
+	rec := httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var resp meResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unexpected error decoding response: %v", err)
+	}
+	if resp.Username != username || resp.DisplayName != "Me Test" || resp.Rating != 1500 {
+		t.Errorf("unexpected profile fields: %+v", resp)
+	}
+	if len(resp.Roles) != 1 || resp.Roles[0] != "admin" {
+		t.Errorf("expected roles to come from the token (%v), got %v", []string{"admin"}, resp.Roles)
+	}
+}
+
+func TestMe_RequiresAuthentication(t *testing.T) {
+	h, _ := testUserHandler(t)
+
+	protected := middleware.Authenticate(testJWTSecret)(http.HandlerFunc(h.Me))
+	req := httptest.NewRequest(http.MethodGet, "/users/me", nil)
+	rec := httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected %d, got %d", http.StatusUnauthorized, rec.Code)
 	}
 }

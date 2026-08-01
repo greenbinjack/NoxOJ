@@ -40,11 +40,12 @@ const insecureDefaultJWTSecret = "insecure-dev-secret-change-in-production"
 
 // Config holds NoxOJ's runtime settings.
 type Config struct {
-	Environment Environment
-	Port        int
-	Postgres    PostgresConfig
-	Redis       RedisConfig
-	JWTSecret   []byte
+	Environment       Environment
+	Port              int
+	Postgres          PostgresConfig
+	Redis             RedisConfig
+	JWTSecret         []byte
+	CORSAllowedOrigin string
 }
 
 // RedisConfig holds what's needed to reach Redis — same
@@ -84,6 +85,11 @@ func Load() (*Config, error) {
 	v.SetDefault("REDIS_HOST", "localhost")
 	v.SetDefault("REDIS_PORT", 6379)
 	v.SetDefault("JWT_SECRET", insecureDefaultJWTSecret)
+	// Vite's default dev server port — the frontend origin the API
+	// must explicitly allow for credentialed (cookie-carrying)
+	// cross-origin requests. Not "*" — browsers reject a wildcard
+	// origin outright once credentials are involved.
+	v.SetDefault("CORS_ALLOWED_ORIGIN", "http://localhost:5173")
 
 	v.SetConfigFile(".env")
 	v.SetConfigType("env")
@@ -121,6 +127,7 @@ func Load() (*Config, error) {
 			Host: v.GetString("REDIS_HOST"),
 			Port: v.GetInt("REDIS_PORT"),
 		},
-		JWTSecret: []byte(jwtSecret),
+		JWTSecret:         []byte(jwtSecret),
+		CORSAllowedOrigin: v.GetString("CORS_ALLOWED_ORIGIN"),
 	}, nil
 }

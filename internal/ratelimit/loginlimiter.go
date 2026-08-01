@@ -20,10 +20,10 @@ type attempt struct {
 // reason — a natural place to revisit this, not something to solve
 // ahead of actually needing it).
 type LoginLimiter struct {
-	mu               sync.Mutex
-	attempts         map[string]*attempt
-	maxFailures      int
-	lockoutDuration  time.Duration
+	mu              sync.Mutex
+	attempts        map[string]*attempt
+	maxFailures     int
+	lockoutDuration time.Duration
 }
 
 // NewLoginLimiter creates a limiter that locks out a username after

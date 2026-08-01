@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -9,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 	"github.com/rs/zerolog"
 
 	"noxoj/internal/cache"
@@ -42,16 +42,14 @@ func requestLogger(logger zerolog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// Handlers bundles the route handlers newRouter needs. Introduced
-// this sprint because the parameter list was about to grow past
-// register/login into refresh/logout too — a struct reads better
-// than five positional http.HandlerFunc arguments and is easier to
-// extend without reshuffling call sites every time a route is added.
+// Handlers bundles the route handlers newRouter needs — a struct
+// instead of a growing pile of positional http.HandlerFunc arguments.
 type Handlers struct {
 	Register http.HandlerFunc
 	Login    http.HandlerFunc
 	Refresh  http.HandlerFunc
 	Logout   http.HandlerFunc
+	Me       http.HandlerFunc
 }
 
 // newRouter takes readiness checks and handlers as plain functions,
@@ -62,11 +60,21 @@ type Handlers struct {
 func newRouter(
 	logger zerolog.Logger,
 	jwtSecret []byte,
+	corsAllowedOrigin string,
 	h Handlers,
 	readinessChecks ...health.Checker,
 ) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(requestLogger(logger))
+	// AllowCredentials must be true (cookies carry the session) and
+	// AllowedOrigins must be an exact origin, never "*" — browsers
+	// reject a wildcard outright once credentials are involved.
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{corsAllowedOrigin},
+		AllowedMethods:   []string{"GET", "POST"},
+		AllowedHeaders:   []string{"Content-Type"},
+		AllowCredentials: true,
+	}))
 
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("NoxOJ API — Sprint 1 skeleton is alive"))
@@ -80,23 +88,11 @@ func newRouter(
 	r.Post("/refresh", h.Refresh)
 	r.Post("/logout", h.Logout)
 
-	// Minimal proof the auth chain (login -> cookie -> middleware ->
-	// handler) actually works end to end. Not the real profile API —
-	// that's Sprint 12; this just returns the authenticated user's ID
-	// and roles.
-	r.With(authmw.Authenticate(jwtSecret)).Get("/me", func(w http.ResponseWriter, r *http.Request) {
-		userID, _ := authmw.UserIDFromContext(r.Context())
-		roles, _ := authmw.RolesFromContext(r.Context())
-		w.Header().Set("Content-Type", "application/json")
-		rolesJSON, _ := json.Marshal(roles)
-		fmt.Fprintf(w, `{"user_id":"%s","roles":%s}`, userID.String(), rolesJSON)
-	})
+	r.With(authmw.Authenticate(jwtSecret)).Get("/users/me", h.Me)
 
 	// Minimal proof RBAC itself works — admin-only, nothing behind it
 	// yet worth protecting for real (that starts once Problem/Contest
-	// management exist). Requires both a valid token AND the admin
-	// role; RequireRole runs after Authenticate so it can read the
-	// roles Authenticate already put in context.
+	// management exist).
 	r.With(authmw.Authenticate(jwtSecret), authmw.RequireRole(domain.RoleAdmin)).Get("/admin/ping", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"status":"ok, you are an admin"}`))
 	})
@@ -142,11 +138,12 @@ func main() {
 	userHandler := handler.NewUserHandler(logger, users)
 	authHandler := handler.NewAuthHandler(logger, users, roles, cfg.JWTSecret, loginLimiter, refreshTokens, cfg.Environment)
 
-	r := newRouter(logger, cfg.JWTSecret, Handlers{
+	r := newRouter(logger, cfg.JWTSecret, cfg.CORSAllowedOrigin, Handlers{
 		Register: userHandler.Register,
 		Login:    authHandler.Login,
 		Refresh:  authHandler.Refresh,
 		Logout:   authHandler.Logout,
+		Me:       userHandler.Me,
 	}, database.Checker(db), cache.Checker(redisClient))
 
 	addr := fmt.Sprintf(":%d", cfg.Port)

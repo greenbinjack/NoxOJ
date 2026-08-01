@@ -11,6 +11,7 @@ import (
 
 	"noxoj/internal/auth"
 	"noxoj/internal/domain"
+	"noxoj/internal/middleware"
 	"noxoj/internal/repository"
 )
 
@@ -125,5 +126,59 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 		Email:       created.Email,
 		DisplayName: created.DisplayName,
 		Rating:      created.Rating,
+	})
+}
+
+// meResponse is the canonical profile shape — a distinct type from
+// registerResponse (a creation receipt) even though the fields
+// overlap, since the two have different reasons to evolve.
+type meResponse struct {
+	ID          string   `json:"id"`
+	Username    string   `json:"username"`
+	Email       *string  `json:"email,omitempty"`
+	DisplayName string   `json:"display_name"`
+	Rating      int      `json:"rating"`
+	Roles       []string `json:"roles"`
+}
+
+// Me returns the authenticated user's own profile. Must run behind
+// middleware.Authenticate — it trusts the request context to already
+// hold a valid user ID.
+//
+// Roles come from the request context (the token's own claims, set by
+// Authenticate) rather than a fresh database query — consistent with
+// Sprint 11's design: this endpoint shows exactly what the current
+// session believes about you, which may lag a real promotion/demotion
+// by up to AccessTokenTTL, same as every other authorization check in
+// the system. Everything else (rating, display name) genuinely can
+// change between logins, so those come from a real, fresh read.
+func (h *UserHandler) Me(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	roles, _ := middleware.RolesFromContext(r.Context())
+
+	user, err := h.users.GetByID(r.Context(), userID)
+	if errors.Is(err, repository.ErrUserNotFound) {
+		// A valid token for a user who no longer exists/is deleted —
+		// treat it the same as "not authenticated," not a server error.
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	if err != nil {
+		h.logger.Error().Err(err).Msg("failed to load profile")
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, meResponse{
+		ID:          user.ID.String(),
+		Username:    user.Username,
+		Email:       user.Email,
+		DisplayName: user.DisplayName,
+		Rating:      user.Rating,
+		Roles:       roles,
 	})
 }

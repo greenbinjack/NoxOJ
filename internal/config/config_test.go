@@ -19,6 +19,9 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.Redis.Host != "localhost" || cfg.Redis.Port != 6379 {
 		t.Errorf("unexpected default redis config: %+v", cfg.Redis)
 	}
+	if cfg.CORSAllowedOrigin != "http://localhost:5173" {
+		t.Errorf("expected default CORS origin http://localhost:5173, got %q", cfg.CORSAllowedOrigin)
+	}
 }
 
 func TestLoad_EnvVarsOverrideDefaults(t *testing.T) {

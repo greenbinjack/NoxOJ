@@ -146,3 +146,35 @@ func TestUserRepository_GetByUsername_ExcludesSoftDeleted(t *testing.T) {
 		t.Fatalf("expected a soft-deleted user to look like ErrUserNotFound, got %v", err)
 	}
 }
+
+func TestUserRepository_GetByID(t *testing.T) {
+	db := testDB(t)
+	repo := NewUserRepository(db)
+	ctx := context.Background()
+
+	username := "sprint12_repo_getbyid"
+	t.Cleanup(func() { db.MustExec("DELETE FROM users WHERE username = $1", username) })
+
+	created, err := repo.Create(ctx, &domain.User{Username: username, DisplayName: "GetByID Test"})
+	if err != nil {
+		t.Fatalf("unexpected error creating: %v", err)
+	}
+
+	got, err := repo.GetByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Username != username {
+		t.Errorf("expected username %q, got %q", username, got.Username)
+	}
+}
+
+func TestUserRepository_GetByID_NotFound(t *testing.T) {
+	db := testDB(t)
+	repo := NewUserRepository(db)
+
+	_, err := repo.GetByID(context.Background(), uuid.New())
+	if !errors.Is(err, ErrUserNotFound) {
+		t.Fatalf("expected ErrUserNotFound, got %v", err)
+	}
+}
