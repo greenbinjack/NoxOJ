@@ -22,6 +22,13 @@ const userIDContextKey contextKey = "userID"
 // it agree on the name without either hardcoding a shared string.
 const AccessTokenCookieName = "access_token"
 
+// RefreshTokenCookieName is the cookie the refresh token is stored
+// in. Only ever read by the /refresh and /logout handlers, never by
+// this package's own Authenticate middleware — the refresh token is
+// deliberately not a substitute for a valid access token on ordinary
+// requests.
+const RefreshTokenCookieName = "refresh_token"
+
 // Authenticate requires a valid access token cookie, storing the
 // authenticated user's ID in the request context for handlers
 // downstream to read via UserIDFromContext. Missing or invalid

@@ -18,6 +18,17 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   api:
     build:
       context: .
@@ -26,18 +37,23 @@ services:
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-development}
       PORT: ${PORT:-8081}
-      # "postgres" — the Compose service name — not "localhost": inside
-      # the container, that's the only way to reach the postgres service.
+      # "postgres"/"redis" — the Compose service names — not
+      # "localhost": inside the container, that's the only way to
+      # reach the other services.
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: ${POSTGRES_USER:-noxoj}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-noxoj_dev_password}
       POSTGRES_DB: ${POSTGRES_DB:-noxoj}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       JWT_SECRET: ${JWT_SECRET:-insecure-dev-secret-change-in-production}
     ports:
       - "${PORT:-8081}:${PORT:-8081}"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   # One-off tool, not a long-running service — excluded from a plain

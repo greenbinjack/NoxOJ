@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/rs/zerolog"
 
+	"noxoj/internal/cache"
 	"noxoj/internal/config"
 	"noxoj/internal/database"
 	"noxoj/internal/handler"
@@ -18,6 +19,7 @@ import (
 	authmw "noxoj/internal/middleware"
 	"noxoj/internal/ratelimit"
 	"noxoj/internal/repository"
+	"noxoj/internal/tokenstore"
 )
 
 func requestLogger(logger zerolog.Logger) func(http.Handler) http.Handler {
@@ -38,6 +40,18 @@ func requestLogger(logger zerolog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
+// Handlers bundles the route handlers newRouter needs. Introduced
+// this sprint because the parameter list was about to grow past
+// register/login into refresh/logout too — a struct reads better
+// than five positional http.HandlerFunc arguments and is easier to
+// extend without reshuffling call sites every time a route is added.
+type Handlers struct {
+	Register http.HandlerFunc
+	Login    http.HandlerFunc
+	Refresh  http.HandlerFunc
+	Logout   http.HandlerFunc
+}
+
 // newRouter takes readiness checks and handlers as plain functions,
 // not concrete dependency-heavy types — so route tests that have
 // nothing to do with the database or auth (TestRootRoute,
@@ -46,8 +60,7 @@ func requestLogger(logger zerolog.Logger) func(http.Handler) http.Handler {
 func newRouter(
 	logger zerolog.Logger,
 	jwtSecret []byte,
-	registerHandler http.HandlerFunc,
-	loginHandler http.HandlerFunc,
+	h Handlers,
 	readinessChecks ...health.Checker,
 ) *chi.Mux {
 	r := chi.NewRouter()
@@ -60,8 +73,10 @@ func newRouter(
 	r.Get("/healthz", health.Liveness)
 	r.Get("/readyz", health.Readiness(readinessChecks...))
 
-	r.Post("/register", registerHandler)
-	r.Post("/login", loginHandler)
+	r.Post("/register", h.Register)
+	r.Post("/login", h.Login)
+	r.Post("/refresh", h.Refresh)
+	r.Post("/logout", h.Logout)
 
 	// Minimal proof the auth chain (login -> cookie -> middleware ->
 	// handler) actually works end to end. Not the real profile API —
@@ -96,10 +111,28 @@ func main() {
 	}
 	defer db.Close()
 
-	loginLimiter := ratelimit.NewLoginLimiter(5, 15*time.Minute)
-	userHandler := handler.NewUserHandler(logger, repository.NewUserRepository(db), cfg.JWTSecret, loginLimiter, cfg.Environment)
+	redisClient, err := cache.Connect(cache.Config{
+		Host: cfg.Redis.Host,
+		Port: cfg.Redis.Port,
+	})
+	if err != nil {
+		logger.Fatal().Err(err).Msg("failed to connect to redis")
+	}
+	defer redisClient.Close()
 
-	r := newRouter(logger, cfg.JWTSecret, userHandler.Register, userHandler.Login, database.Checker(db))
+	users := repository.NewUserRepository(db)
+	loginLimiter := ratelimit.NewLoginLimiter(5, 15*time.Minute)
+	refreshTokens := tokenstore.NewRefreshTokenStore(redisClient)
+
+	userHandler := handler.NewUserHandler(logger, users)
+	authHandler := handler.NewAuthHandler(logger, users, cfg.JWTSecret, loginLimiter, refreshTokens, cfg.Environment)
+
+	r := newRouter(logger, cfg.JWTSecret, Handlers{
+		Register: userHandler.Register,
+		Login:    authHandler.Login,
+		Refresh:  authHandler.Refresh,
+		Logout:   authHandler.Logout,
+	}, database.Checker(db), cache.Checker(redisClient))
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	logger.Info().Str("addr", addr).Str("environment", string(cfg.Environment)).Msg("NoxOJ API starting")

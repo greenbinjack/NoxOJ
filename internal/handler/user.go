@@ -10,35 +10,20 @@ import (
 	"github.com/rs/zerolog"
 
 	"noxoj/internal/auth"
-	"noxoj/internal/config"
 	"noxoj/internal/domain"
-	"noxoj/internal/middleware"
-	"noxoj/internal/ratelimit"
 	"noxoj/internal/repository"
 )
 
+// UserHandler owns user-resource concerns (creating an account).
+// Session/token concerns (login, refresh, logout) live in AuthHandler
+// — a different set of responsibilities with different dependencies.
 type UserHandler struct {
-	logger       zerolog.Logger
-	users        *repository.UserRepository
-	jwtSecret    []byte
-	loginLimiter *ratelimit.LoginLimiter
-	environment  config.Environment
+	logger zerolog.Logger
+	users  *repository.UserRepository
 }
 
-func NewUserHandler(
-	logger zerolog.Logger,
-	users *repository.UserRepository,
-	jwtSecret []byte,
-	loginLimiter *ratelimit.LoginLimiter,
-	environment config.Environment,
-) *UserHandler {
-	return &UserHandler{
-		logger:       logger,
-		users:        users,
-		jwtSecret:    jwtSecret,
-		loginLimiter: loginLimiter,
-		environment:  environment,
-	}
+func NewUserHandler(logger zerolog.Logger, users *repository.UserRepository) *UserHandler {
+	return &UserHandler{logger: logger, users: users}
 }
 
 type registerRequest struct {
@@ -140,83 +125,5 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 		Email:       created.Email,
 		DisplayName: created.DisplayName,
 		Rating:      created.Rating,
-	})
-}
-
-type loginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-}
-
-type loginResponse struct {
-	ID       string `json:"id"`
-	Username string `json:"username"`
-}
-
-func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
-	var req loginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-
-	if !h.loginLimiter.Allowed(req.Username) {
-		writeError(w, http.StatusTooManyRequests, "too many failed attempts — try again later")
-		return
-	}
-
-	user, err := h.users.GetByUsername(r.Context(), req.Username)
-	if err != nil && !errors.Is(err, repository.ErrUserNotFound) {
-		h.logger.Error().Err(err).Msg("failed to look up user for login")
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-
-	// Always run a real bcrypt comparison, even when the user doesn't
-	// exist — comparing against auth.DummyHash() keeps the response
-	// time consistent either way. Skipping straight to "no such user"
-	// would respond near-instantly, while a real wrong-password check
-	// takes bcrypt's ~100ms — a timing difference an attacker could
-	// use to enumerate valid usernames without ever seeing an error
-	// message say so.
-	hashToCheck := auth.DummyHash()
-	if user != nil && user.PasswordHash != nil {
-		hashToCheck = *user.PasswordHash
-	}
-	passwordErr := auth.CheckPassword(hashToCheck, req.Password)
-
-	if user == nil || passwordErr != nil {
-		h.loginLimiter.RecordFailure(req.Username)
-		writeError(w, http.StatusUnauthorized, "invalid username or password")
-		return
-	}
-
-	h.loginLimiter.RecordSuccess(req.Username)
-
-	token, err := auth.GenerateAccessToken(user.ID, h.jwtSecret)
-	if err != nil {
-		h.logger.Error().Err(err).Msg("failed to generate access token")
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-
-	http.SetCookie(w, &http.Cookie{
-		Name:     middleware.AccessTokenCookieName,
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		// Secure requires HTTPS, which local development over plain
-		// http://localhost doesn't have — this is a config VALUE
-		// differing by environment (like PORT and POSTGRES_HOST
-		// before it), not a code path difference: the same code runs
-		// everywhere, only this one flag's value changes.
-		Secure:   h.environment == config.Production,
-		SameSite: http.SameSiteStrictMode,
-		MaxAge:   int(auth.AccessTokenTTL.Seconds()),
-	})
-
-	writeJSON(w, http.StatusOK, loginResponse{
-		ID:       user.ID.String(),
-		Username: user.Username,
 	})
 }

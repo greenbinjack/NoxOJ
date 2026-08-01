@@ -43,7 +43,15 @@ type Config struct {
 	Environment Environment
 	Port        int
 	Postgres    PostgresConfig
+	Redis       RedisConfig
 	JWTSecret   []byte
+}
+
+// RedisConfig holds what's needed to reach Redis — same
+// localhost-vs-Compose-service-name pattern as PostgresConfig.
+type RedisConfig struct {
+	Host string
+	Port int
 }
 
 // PostgresConfig holds what's needed to reach the database. Host
@@ -73,6 +81,8 @@ func Load() (*Config, error) {
 	v.SetDefault("POSTGRES_USER", "noxoj")
 	v.SetDefault("POSTGRES_PASSWORD", "noxoj_dev_password")
 	v.SetDefault("POSTGRES_DB", "noxoj")
+	v.SetDefault("REDIS_HOST", "localhost")
+	v.SetDefault("REDIS_PORT", 6379)
 	v.SetDefault("JWT_SECRET", insecureDefaultJWTSecret)
 
 	v.SetConfigFile(".env")
@@ -106,6 +116,10 @@ func Load() (*Config, error) {
 			User:     v.GetString("POSTGRES_USER"),
 			Password: v.GetString("POSTGRES_PASSWORD"),
 			Name:     v.GetString("POSTGRES_DB"),
+		},
+		Redis: RedisConfig{
+			Host: v.GetString("REDIS_HOST"),
+			Port: v.GetInt("REDIS_PORT"),
 		},
 		JWTSecret: []byte(jwtSecret),
 	}, nil

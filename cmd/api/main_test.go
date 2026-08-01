@@ -22,8 +22,15 @@ func stubHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+var stubHandlers = Handlers{
+	Register: stubHandler,
+	Login:    stubHandler,
+	Refresh:  stubHandler,
+	Logout:   stubHandler,
+}
+
 func TestRootRoute(t *testing.T) {
-	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandler, stubHandler)
+	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandlers)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
@@ -40,7 +47,7 @@ func TestRootRoute(t *testing.T) {
 }
 
 func TestHealthzRoute(t *testing.T) {
-	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandler, stubHandler)
+	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandlers)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
@@ -52,7 +59,7 @@ func TestHealthzRoute(t *testing.T) {
 }
 
 func TestReadyzRoute(t *testing.T) {
-	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandler, stubHandler)
+	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandlers)
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
@@ -65,7 +72,7 @@ func TestReadyzRoute(t *testing.T) {
 
 func TestReadyzRoute_FailsWhenADependencyIsDown(t *testing.T) {
 	failingCheck := func() error { return errors.New("database unreachable") }
-	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandler, stubHandler, failingCheck)
+	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandlers, failingCheck)
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
@@ -77,7 +84,7 @@ func TestReadyzRoute_FailsWhenADependencyIsDown(t *testing.T) {
 }
 
 func TestMeRoute_RequiresAuthentication(t *testing.T) {
-	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandler, stubHandler)
+	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandlers)
 
 	req := httptest.NewRequest(http.MethodGet, "/me", nil)
 	rec := httptest.NewRecorder()
@@ -89,7 +96,7 @@ func TestMeRoute_RequiresAuthentication(t *testing.T) {
 }
 
 func TestMeRoute_ReturnsAuthenticatedUserID(t *testing.T) {
-	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandler, stubHandler)
+	r := newRouter(zerolog.Nop(), testJWTSecret, stubHandlers)
 
 	userID := uuid.New()
 	token, err := auth.GenerateAccessToken(userID, testJWTSecret)

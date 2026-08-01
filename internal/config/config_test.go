@@ -16,6 +16,9 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.Postgres.Host != "localhost" || cfg.Postgres.Port != 5432 || cfg.Postgres.Name != "noxoj" {
 		t.Errorf("unexpected default postgres config: %+v", cfg.Postgres)
 	}
+	if cfg.Redis.Host != "localhost" || cfg.Redis.Port != 6379 {
+		t.Errorf("unexpected default redis config: %+v", cfg.Redis)
+	}
 }
 
 func TestLoad_EnvVarsOverrideDefaults(t *testing.T) {
